@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type Corner = {
@@ -9,523 +10,298 @@ type Corner = {
   y: number;
 };
 
-type SavedTemplate = {
+type Template = {
   id: string;
-  trackName: string;
-  cornerCount: number;
-  trackMap: string | null;
+  track_name: string;
+  team: string;
+  corner_count: number;
+  track_map_url: string | null;
   corners: Corner[];
-  createdAt: string;
 };
 
-function makeDefaultCorners(count: number): Corner[] {
-  return Array.from({ length: count }, (_, i) => ({
-    id: i + 1,
-    x: 16 + ((i * 9) % 68),
-    y: 18 + ((i * 7) % 58),
-  }));
-}
-
-const STORAGE_KEY = "driver-debrief-templates";
+const TEAM_OPTIONS = [
+  "GB3",
+  "GT3",
+  "British F4",
+  "FIA F3",
+  "FIA F2",
+  "FREC",
+];
 
 export default function CreatorPage() {
+  const [team, setTeam] = useState("GB3");
   const [trackName, setTrackName] = useState("");
-  const [cornerCount, setCornerCount] = useState(9);
-  const [trackMap, setTrackMap] = useState<string | null>(null);
-  const [templateCreated, setTemplateCreated] = useState(false);
+  const [trackMapUrl, setTrackMapUrl] = useState("");
   const [corners, setCorners] = useState<Corner[]>([]);
-  const [draggingCornerId, setDraggingCornerId] = useState<number | null>(null);
-
-  const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [saveMessage, setSaveMessage] = useState("");
-
-  const [shareLink, setShareLink] = useState("");
-  const [cloudSaveMessage, setCloudSaveMessage] = useState("");
-
-  const mapRef = useRef<HTMLDivElement | null>(null);
-
-  const canCreate = useMemo(() => {
-    return trackName.trim() !== "" && trackMap !== null && cornerCount > 0;
-  }, [trackName, trackMap, cornerCount]);
-
-  const canSave = useMemo(() => {
-    return (
-      trackName.trim() !== "" &&
-      trackMap !== null &&
-      corners.length > 0 &&
-      templateCreated
-    );
-  }, [trackName, trackMap, corners, templateCreated]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [status, setStatus] = useState("");
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [mapAspectRatio, setMapAspectRatio] = useState<number>(1);
+  const [origin, setOrigin] = useState("");
 
   useEffect(() => {
-    loadSavedTemplates();
+    setOrigin(window.location.origin);
   }, []);
 
-  function loadSavedTemplates() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        setSavedTemplates([]);
-        return;
+  useEffect(() => {
+    async function loadTemplates() {
+      setLoadingTemplates(true);
+
+      const { data, error } = await supabase
+        .from("debrief_templates")
+        .select("id, track_name, team, corner_count, track_map_url, corners")
+        .order("track_name", { ascending: true });
+
+      if (error) {
+        setStatus(`Failed to load templates: ${error.message}`);
+      } else {
+        setTemplates((data ?? []) as Template[]);
       }
 
-      const parsed = JSON.parse(raw) as SavedTemplate[];
-      setSavedTemplates(parsed);
-    } catch {
-      setSavedTemplates([]);
+      setLoadingTemplates(false);
+    }
+
+    loadTemplates();
+  }, []);
+
+  const nextCornerNumber = useMemo(() => corners.length + 1, [corners.length]);
+
+  function addCornerFromClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!trackMapUrl.trim()) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+    const newCorner: Corner = {
+      id: nextCornerNumber,
+      x,
+      y,
+    };
+
+    setCorners((prev) => [...prev, newCorner]);
+  }
+
+  function removeLastCorner() {
+    setCorners((prev) => prev.slice(0, -1));
+  }
+
+  function resetCorners() {
+    setCorners([]);
+  }
+
+  async function refreshTemplates() {
+    const { data, error } = await supabase
+      .from("debrief_templates")
+      .select("id, track_name, team, corner_count, track_map_url, corners")
+      .order("track_name", { ascending: true });
+
+    if (!error) {
+      setTemplates((data ?? []) as Template[]);
     }
   }
 
-  function persistTemplates(templates: SavedTemplate[]) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
-    setSavedTemplates(templates);
-  }
+  async function handleSaveTemplate() {
+    if (!trackName.trim()) {
+      setStatus("Please enter a track name.");
+      return;
+    }
 
-  function handleTrackMapUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    if (!team.trim()) {
+      setStatus("Please select a team.");
+      return;
+    }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setTrackMap(reader.result as string);
-      setTemplateCreated(false);
-      setCorners([]);
-      setSaveMessage("");
-      setCloudSaveMessage("");
-      setShareLink("");
-    };
-    reader.readAsDataURL(file);
-  }
+    if (!trackMapUrl.trim()) {
+      setStatus("Please enter a track map URL.");
+      return;
+    }
 
-  function handleCreateTemplate() {
-    const safeCornerCount = Math.max(1, Math.min(40, cornerCount));
-    setCorners(makeDefaultCorners(safeCornerCount));
-    setTemplateCreated(true);
-    setSaveMessage("");
-    setCloudSaveMessage("");
-    setShareLink("");
-  }
-
-  function updateCornerPosition(cornerId: number, clientX: number, clientY: number) {
-    if (!mapRef.current) return;
-
-    const rect = mapRef.current.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    const y = ((clientY - rect.top) / rect.height) * 100;
-
-    const clampedX = Math.max(2, Math.min(98, x));
-    const clampedY = Math.max(2, Math.min(98, y));
-
-    setCorners((prev) =>
-      prev.map((corner) =>
-        corner.id === cornerId ? { ...corner, x: clampedX, y: clampedY } : corner
-      )
-    );
-  }
-
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (draggingCornerId === null) return;
-    updateCornerPosition(draggingCornerId, e.clientX, e.clientY);
-  }
-
-  function handleMouseUp() {
-    setDraggingCornerId(null);
-  }
-
-  function handleTouchMove(e: React.TouchEvent<HTMLDivElement>) {
-    if (draggingCornerId === null) return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    updateCornerPosition(draggingCornerId, touch.clientX, touch.clientY);
-  }
-
-  function handleTouchEnd() {
-    setDraggingCornerId(null);
-  }
-
-  function handleSaveTemplate() {
-    if (!canSave) return;
-
-    const newTemplate: SavedTemplate = {
-      id: crypto.randomUUID(),
-      trackName: trackName.trim(),
-      cornerCount,
-      trackMap,
-      corners,
-      createdAt: new Date().toISOString(),
-    };
-
-    const updated = [newTemplate, ...savedTemplates];
-    persistTemplates(updated);
-    setSelectedTemplateId(newTemplate.id);
-    setSaveMessage("Template saved locally.");
-    setCloudSaveMessage("");
-  }
-
-  function handleLoadTemplate() {
-    if (!selectedTemplateId) return;
-
-    const selected = savedTemplates.find((t) => t.id === selectedTemplateId);
-    if (!selected) return;
-
-    setTrackName(selected.trackName);
-    setCornerCount(selected.cornerCount);
-    setTrackMap(selected.trackMap);
-    setCorners(selected.corners);
-    setTemplateCreated(true);
-    setSaveMessage("Template loaded.");
-    setCloudSaveMessage("");
-    setShareLink("");
-  }
-
-  function handleDeleteTemplate() {
-    if (!selectedTemplateId) return;
-
-    const updated = savedTemplates.filter((t) => t.id !== selectedTemplateId);
-    persistTemplates(updated);
-    setSelectedTemplateId("");
-    setSaveMessage("Template deleted.");
-    setCloudSaveMessage("");
-    setShareLink("");
-  }
-
-  function handleNewBlankTemplate() {
-    setTrackName("");
-    setCornerCount(9);
-    setTrackMap(null);
-    setCorners([]);
-    setTemplateCreated(false);
-    setDraggingCornerId(null);
-    setSaveMessage("");
-    setCloudSaveMessage("");
-    setShareLink("");
-  }
-
-  async function handleSaveTemplateToCloud() {
-    if (!trackMap || !templateCreated || corners.length === 0 || !trackName.trim()) {
-      setCloudSaveMessage("Complete the template before saving to cloud.");
+    if (corners.length === 0) {
+      setStatus("Please place at least one corner on the map.");
       return;
     }
 
     try {
-      setCloudSaveMessage("Uploading track map...");
-      setShareLink("");
+      setStatus("Saving template...");
 
-      const response = await fetch(trackMap);
-      const blob = await response.blob();
-
-      const fileName = `${crypto.randomUUID()}.png`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("track-maps")
-        .upload(fileName, blob, {
-          contentType: "image/png",
-          upsert: false,
-        });
-
-      if (uploadError) {
-        setCloudSaveMessage(`Track map upload failed: ${uploadError.message}`);
-        return;
-      }
-
-      const { data: publicUrlData } = supabase.storage
-        .from("track-maps")
-        .getPublicUrl(fileName);
-
-      setCloudSaveMessage("Saving template to database...");
+      const payload = {
+        track_name: trackName.trim(),
+        team,
+        corner_count: corners.length,
+        track_map_url: trackMapUrl.trim(),
+        corners,
+      };
 
       const { data, error } = await supabase
         .from("debrief_templates")
-        .insert({
-          track_name: trackName.trim(),
-          corner_count: cornerCount,
-          track_map_url: publicUrlData.publicUrl,
-          corners: corners,
-        })
-        .select("id")
+        .insert([payload])
+        .select()
         .single();
 
       if (error) {
-        setCloudSaveMessage(`Database save failed: ${error.message}`);
+        setStatus(`Failed to save template: ${error.message}`);
         return;
       }
 
-      const link = `${window.location.origin}/driver/${data.id}`;
-      setShareLink(link);
-      setCloudSaveMessage("Template saved to cloud.");
+      const saved = data as Template;
+
+      setStatus(`Template saved successfully for ${saved.team}.`);
+      setTrackName("");
+      setTrackMapUrl("");
+      setTeam("GB3");
+      setCorners([]);
+
+      await refreshTemplates();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      setCloudSaveMessage(`Save failed: ${message}`);
+      setStatus(`Failed to save template: ${message}`);
     }
   }
 
+  async function handleDeleteTemplate(templateId: string) {
+    const confirmed = window.confirm("Delete this template?");
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("debrief_templates")
+      .delete()
+      .eq("id", templateId);
+
+    if (error) {
+      setStatus(`Failed to delete template: ${error.message}`);
+      return;
+    }
+
+    setStatus("Template deleted.");
+    await refreshTemplates();
+  }
+
   return (
-    <main className="min-h-screen bg-[#0A0E14] px-4 py-8 text-white md:px-8">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <section className="rounded-[30px] border border-[#2A3441] bg-[#141A22] px-6 py-8 shadow-2xl md:px-8 md:py-10">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#E10600]">
-                Rodin Motorsport
-              </p>
-              <h1 className="mt-3 text-3xl font-bold tracking-tight text-white md:text-5xl">
-                Debrief Template Builder
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-[#9CA3AF] md:text-base">
-                Upload a circuit map, define the number of corners, drag the markers
-                into place, and generate a driver link for WhatsApp.
-              </p>
+    <main className="min-h-screen bg-[#0A0E14] px-4 py-6 text-white md:px-8 md:py-8">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] px-5 py-6 shadow-2xl md:px-8 md:py-7">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#E10600]">
+            Rodin Motorsport
+          </p>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight md:text-5xl">
+            Debrief Template Creator
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
+            Build a team-specific debrief sheet template by choosing the team,
+            entering the track details, and placing corner markers on the map.
+          </p>
+        </section>
+
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-white">
+                Team
+              </label>
+              <select
+                value={team}
+                onChange={(e) => setTeam(e.target.value)}
+                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
+              >
+                {TEAM_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div
-              className={`rounded-2xl border px-4 py-3 text-sm ${
-                templateCreated
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                  : "border-[#2A3441] bg-[#1B2430] text-[#9CA3AF]"
-              }`}
-            >
-              {templateCreated ? "Template draft created" : "Template not created yet"}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-white">
+                Track name
+              </label>
+              <input
+                value={trackName}
+                onChange={(e) => setTrackName(e.target.value)}
+                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
+                placeholder="e.g. Silverstone GP"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-2 block text-sm font-medium text-white">
+              Track map URL
+            </label>
+            <input
+              value={trackMapUrl}
+              onChange={(e) => setTrackMapUrl(e.target.value)}
+              className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
+              placeholder="Paste image URL"
+            />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2 text-sm">
+            <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
+              Team: {team}
+            </div>
+            <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
+              Corners placed: {corners.length}
             </div>
           </div>
         </section>
 
-        <section className="grid gap-8 xl:grid-cols-[380px_minmax(0,1fr)]">
-          <div className="space-y-8">
-            <div className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
-              <div className="mb-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9CA3AF]">
-                  Setup
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-                  Template Inputs
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-[#9CA3AF]">
-                  Define the circuit and generate the initial corner layout.
-                </p>
-              </div>
-
-              <div className="space-y-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-white">
-                    Track name
-                  </label>
-                  <input
-                    className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-[#E10600]"
-                    placeholder="Brands Hatch GP"
-                    value={trackName}
-                    onChange={(e) => setTrackName(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-white">
-                    Number of corners
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={40}
-                    className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none transition focus:border-[#E10600]"
-                    value={cornerCount}
-                    onChange={(e) => setCornerCount(Number(e.target.value))}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-white">
-                    Track map image
-                  </label>
-                  <div className="rounded-2xl border border-dashed border-[#2A3441] bg-[#1B2430] p-4">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleTrackMapUpload}
-                      className="block w-full text-sm text-[#9CA3AF] file:mr-4 file:rounded-xl file:border-0 file:bg-[#E10600] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-[#C50500]"
-                    />
-                    <p className="mt-3 text-xs leading-5 text-[#9CA3AF]">
-                      Use a clean track image with enough space around the layout
-                      for corner labels.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button
-                    onClick={handleCreateTemplate}
-                    disabled={!canCreate}
-                    className="rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500] disabled:cursor-not-allowed disabled:bg-[#2A3441] disabled:text-[#9CA3AF]"
-                  >
-                    Create Initial Template
-                  </button>
-
-                  <button
-                    onClick={handleSaveTemplate}
-                    disabled={!canSave}
-                    className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600] hover:text-white disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
-                  >
-                    Save Locally
-                  </button>
-                </div>
-
-                <button
-                  onClick={handleSaveTemplateToCloud}
-                  disabled={!canSave}
-                  className="w-full rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500] disabled:cursor-not-allowed disabled:bg-[#2A3441] disabled:text-[#9CA3AF]"
-                >
-                  Save Template to Cloud
-                </button>
-
-                <button
-                  onClick={handleNewBlankTemplate}
-                  className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-[#9CA3AF] transition hover:text-white"
-                >
-                  New Blank Template
-                </button>
-
-                {templateCreated && (
-                  <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
-                    Drag each corner marker to its exact position on the circuit map.
-                  </div>
-                )}
-
-                {saveMessage && (
-                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-300">
-                    {saveMessage}
-                  </div>
-                )}
-
-                {cloudSaveMessage && (
-                  <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
-                    {cloudSaveMessage}
-                  </div>
-                )}
-
-                {shareLink && (
-                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm">
-                    <div className="font-semibold text-emerald-300">Driver link ready</div>
-                    <div className="mt-2 break-all text-white">{shareLink}</div>
-                  </div>
-                )}
-              </div>
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-4 shadow-2xl md:p-6">
+          <div className="mb-5 flex flex-col gap-4 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold text-white">Track Map</h2>
+              <p className="mt-2 text-sm text-[#9CA3AF]">
+                Click on the map to place corner markers in order: T1, T2, T3, and so on.
+              </p>
             </div>
 
-            <div className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
-              <div className="mb-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9CA3AF]">
-                  Library
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-                  Saved Templates
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-[#9CA3AF]">
-                  Load an existing local template instead of rebuilding it each time.
-                </p>
-              </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={removeLastCorner}
+                className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+              >
+                Remove Last Corner
+              </button>
 
-              <div className="space-y-4">
-                <select
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                  className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
-                >
-                  <option value="">Select saved template</option>
-                  {savedTemplates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.trackName} ({template.cornerCount} corners)
-                    </option>
-                  ))}
-                </select>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button
-                    onClick={handleLoadTemplate}
-                    disabled={!selectedTemplateId}
-                    className="rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500] disabled:cursor-not-allowed disabled:bg-[#2A3441] disabled:text-[#9CA3AF]"
-                  >
-                    Load Template
-                  </button>
-
-                  <button
-                    onClick={handleDeleteTemplate}
-                    disabled={!selectedTemplateId}
-                    className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-red-500 hover:text-red-300 disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
-                  >
-                    Delete Template
-                  </button>
-                </div>
-
-                <div className="text-sm text-[#9CA3AF]">
-                  {savedTemplates.length === 0
-                    ? "No templates saved locally yet."
-                    : `${savedTemplates.length} template(s) saved in this browser.`}
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={resetCorners}
+                className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+              >
+                Reset All Corners
+              </button>
             </div>
           </div>
 
-          <div className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-6">
-            <div className="mb-5 flex flex-col gap-4 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9CA3AF]">
-                  Preview
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-                  Circuit Template
-                </h2>
-              </div>
+          <div className="rounded-[24px] bg-[#111827] p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[760px]">
+              <div
+                className="relative w-full overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
+                style={{ aspectRatio: String(mapAspectRatio) }}
+                onClick={addCornerFromClick}
+              >
+                {trackMapUrl.trim() ? (
+                  <>
+                    <img
+                      src={trackMapUrl}
+                      alt="Track map"
+                      className="absolute inset-0 h-full w-full"
+                      onLoad={(e) => {
+                        const img = e.currentTarget;
+                        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                          setMapAspectRatio(img.naturalWidth / img.naturalHeight);
+                        }
+                      }}
+                    />
 
-              <div className="flex flex-wrap gap-2 text-sm">
-                <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
-                  {trackName || "Track not set"}
-                </div>
-                <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
-                  {cornerCount} corners
-                </div>
-              </div>
-            </div>
-
-            {!trackMap ? (
-              <div className="flex min-h-[520px] items-center justify-center rounded-[24px] border border-dashed border-[#2A3441] bg-[#111827] px-6 text-center">
-                <div>
-                  <p className="text-lg font-medium text-white">
-                    No circuit map loaded
-                  </p>
-                  <p className="mt-2 text-sm text-[#9CA3AF]">
-                    Upload a map on the left to begin building the template.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-[24px] bg-[#111827] p-4">
-                <div
-                  ref={mapRef}
-                  className="relative min-h-[620px] overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                  onTouchMove={handleTouchMove}
-                  onTouchEnd={handleTouchEnd}
-                >
-                  <img
-                    src={trackMap}
-                    alt="Track map preview"
-                    className="h-full w-full object-contain select-none"
-                    draggable={false}
-                  />
-
-                  {templateCreated &&
-                    corners.map((corner) => (
+                    {corners.map((corner) => (
                       <button
                         key={corner.id}
                         type="button"
-                        onMouseDown={() => setDraggingCornerId(corner.id)}
-                        onTouchStart={() => setDraggingCornerId(corner.id)}
-                        className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1 text-base font-semibold text-white shadow-lg transition ${
-                          draggingCornerId === corner.id
-                            ? "border-[#E10600] bg-[#E10600]"
-                            : "border-[#2A3441] bg-[#141A22]/95"
-                        }`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#E10600] bg-[#E10600] px-2.5 py-1 text-sm font-semibold text-white shadow-lg sm:px-3 sm:py-1.5 sm:text-base"
                         style={{
                           left: `${corner.x}%`,
                           top: `${corner.y}%`,
@@ -534,10 +310,115 @@ export default function CreatorPage() {
                         T{corner.id}
                       </button>
                     ))}
-                </div>
+                  </>
+                ) : (
+                  <div className="flex h-full min-h-[280px] items-center justify-center px-6 text-center text-sm text-[#9CA3AF]">
+                    Paste a track map URL above to start placing corners.
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
+        </section>
+
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
+          <h2 className="text-2xl font-semibold text-white">Save Template</h2>
+          <p className="mt-2 text-sm text-[#9CA3AF]">
+            This template will be saved against the selected team, so only engineers from that same team appear on the driver page.
+          </p>
+
+          <div className="mt-5">
+            <button
+              type="button"
+              onClick={handleSaveTemplate}
+              className="w-full rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500]"
+            >
+              Save Template
+            </button>
+          </div>
+
+          {status && (
+            <div className="mt-4 rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
+              {status}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
+          <div className="flex flex-col gap-3 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold text-white">Existing Templates</h2>
+              <p className="mt-2 text-sm text-[#9CA3AF]">
+                Open the driver page directly from any saved template.
+              </p>
+            </div>
+          </div>
+
+          {loadingTemplates ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">Loading templates...</p>
+          ) : templates.length === 0 ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">No templates saved yet.</p>
+          ) : (
+            <div className="mt-5 grid gap-4">
+              {templates.map((template) => {
+                const driverPath = `/driver/${template.id}`;
+                const driverUrl = origin ? `${origin}${driverPath}` : driverPath;
+
+                return (
+                  <div
+                    key={template.id}
+                    className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
+                            {template.team || "No team"}
+                          </span>
+                          <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
+                            {template.corner_count} corners
+                          </span>
+                        </div>
+
+                        <h3 className="text-xl font-semibold text-white">
+                          {template.track_name}
+                        </h3>
+
+                        <p className="break-all text-sm text-[#9CA3AF]">
+                          {driverUrl}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-3">
+                        <Link
+                          href={driverPath}
+                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                        >
+                          Open Driver Page
+                        </Link>
+
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard.writeText(driverUrl)}
+                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                        >
+                          Copy Link
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTemplate(template.id)}
+                          className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
     </main>
