@@ -22,15 +22,9 @@ type SubmittedDebrief = {
 };
 
 type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
-type DriverColour = "red" | "blue" | "grey";
+type PhaseMode = "entry" | "mid" | "exit" | "all";
 
 const lineColours = ["#ef4444", "#2563eb", "#9ca3af"];
-
-const DRIVER_COLOURS: Record<DriverColour, string> = {
-  red: "#ef4444",
-  blue: "#2563eb",
-  grey: "#9ca3af",
-};
 
 const phaseRows: { key: PhaseKey; label: string }[] = [
   { key: "entryBalanceValue", label: "Entry" },
@@ -39,13 +33,13 @@ const phaseRows: { key: PhaseKey; label: string }[] = [
 ];
 
 const majorScaleLabels = [
-  { label: "US 3", value: -3 },
-  { label: "US 2", value: -2 },
-  { label: "US 1", value: -1 },
-  { label: "OK", value: 0 },
-  { label: "OS 1", value: 1 },
-  { label: "OS 2", value: 2 },
-  { label: "OS 3", value: 3 },
+  { label: "US 3", value: -3, fill: "#ef4444" },
+  { label: "US 2", value: -2, fill: "#f59e0b" },
+  { label: "US 1", value: -1, fill: "#eab308" },
+  { label: "OK", value: 0, fill: "#22c55e" },
+  { label: "OS 1", value: 1, fill: "#eab308" },
+  { label: "OS 2", value: 2, fill: "#f59e0b" },
+  { label: "OS 3", value: 3, fill: "#ef4444" },
 ];
 
 function clamp(value: number, min: number, max: number) {
@@ -62,9 +56,10 @@ export default function SummaryPage() {
   const [allDebriefs, setAllDebriefs] = useState<SubmittedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [selectedTeam, setSelectedTeam] = useState("GB3");
+  const [selectedTeam, setSelectedTeam] = useState("");
   const [selectedTrack, setSelectedTrack] = useState("");
   const [selectedSession, setSelectedSession] = useState("");
+  const [mode, setMode] = useState<PhaseMode>("entry");
 
   const [selectedDebriefIds, setSelectedDebriefIds] = useState<string[]>([]);
 
@@ -90,17 +85,25 @@ export default function SummaryPage() {
   }, []);
 
   const availableTeams = useMemo(() => {
-    const teams = Array.from(
+    return Array.from(
       new Set(
         allDebriefs
           .map((d) => d.team?.trim())
           .filter((value): value is string => !!value)
       )
-    );
-    return teams.sort();
+    ).sort();
   }, [allDebriefs]);
 
+  useEffect(() => {
+    if (availableTeams.length > 0) {
+      if (!selectedTeam || !availableTeams.includes(selectedTeam)) {
+        setSelectedTeam(availableTeams[0]);
+      }
+    }
+  }, [availableTeams, selectedTeam]);
+
   const filteredByTeam = useMemo(() => {
+    if (!selectedTeam) return [];
     return allDebriefs.filter((d) => (d.team ?? "") === selectedTeam);
   }, [allDebriefs, selectedTeam]);
 
@@ -109,6 +112,12 @@ export default function SummaryPage() {
       new Set(filteredByTeam.map((d) => d.track_name).filter(Boolean))
     ).sort();
   }, [filteredByTeam]);
+
+  useEffect(() => {
+    if (selectedTrack && !availableTracks.includes(selectedTrack)) {
+      setSelectedTrack("");
+    }
+  }, [availableTracks, selectedTrack]);
 
   const filteredByTrack = useMemo(() => {
     if (!selectedTrack) return filteredByTeam;
@@ -121,29 +130,17 @@ export default function SummaryPage() {
     ).sort();
   }, [filteredByTrack]);
 
-  const fullyFilteredDebriefs = useMemo(() => {
-    return filteredByTrack.filter((d) =>
-      selectedSession ? (d.session_name ?? "") === selectedSession : true
-    );
-  }, [filteredByTrack, selectedSession]);
-
-  useEffect(() => {
-    if (availableTeams.length > 0 && !availableTeams.includes(selectedTeam)) {
-      setSelectedTeam(availableTeams[0]);
-    }
-  }, [availableTeams, selectedTeam]);
-
-  useEffect(() => {
-    if (selectedTrack && !availableTracks.includes(selectedTrack)) {
-      setSelectedTrack("");
-    }
-  }, [availableTracks, selectedTrack]);
-
   useEffect(() => {
     if (selectedSession && !availableSessions.includes(selectedSession)) {
       setSelectedSession("");
     }
   }, [availableSessions, selectedSession]);
+
+  const fullyFilteredDebriefs = useMemo(() => {
+    return filteredByTrack.filter((d) =>
+      selectedSession ? (d.session_name ?? "") === selectedSession : true
+    );
+  }, [filteredByTrack, selectedSession]);
 
   useEffect(() => {
     const nextIds = fullyFilteredDebriefs.slice(0, 3).map((d) => d.id);
@@ -207,7 +204,7 @@ export default function SummaryPage() {
   const headerHeight = 46;
   const rowHeight = 28;
   const rowsPerCorner = 3;
-  const bodyHeight = maxCorner * rowsPerCorner * rowHeight;
+  const bodyHeight = Math.max(maxCorner * rowsPerCorner * rowHeight, 140);
   const svgHeight = headerHeight + bodyHeight + 2;
 
   const turnColWidth = 58;
@@ -228,7 +225,7 @@ export default function SummaryPage() {
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div>
               <label className="mb-2 block text-sm font-medium text-white">Team</label>
               <select
@@ -236,11 +233,15 @@ export default function SummaryPage() {
                 onChange={(e) => setSelectedTeam(e.target.value)}
                 className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
               >
-                {availableTeams.map((team) => (
-                  <option key={team} value={team}>
-                    {team}
-                  </option>
-                ))}
+                {availableTeams.length === 0 ? (
+                  <option value="">No teams found</option>
+                ) : (
+                  availableTeams.map((team) => (
+                    <option key={team} value={team}>
+                      {team}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -273,6 +274,20 @@ export default function SummaryPage() {
                     {session}
                   </option>
                 ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-white">Phase</label>
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value as PhaseMode)}
+                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
+              >
+                <option value="entry">Entry</option>
+                <option value="mid">Mid</option>
+                <option value="exit">Exit</option>
+                <option value="all">All</option>
               </select>
             </div>
           </div>
@@ -349,16 +364,17 @@ export default function SummaryPage() {
                 <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
                 <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
 
-                <text x={12} y={28} fontSize="12" fill="#111827" fontWeight="700">
+                <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
                   Turn
                 </text>
-                <text x={commentLeft + commentWidth / 2} y={28} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                <text x={commentLeft + commentWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
                   Other Comments
                 </text>
 
                 {majorScaleLabels.map((item, index) => {
-                  const x = xForBalance(item.value, graphLeft, graphWidth);
                   const cellWidth = graphWidth / 7;
+                  const x = xForBalance(item.value, graphLeft, graphWidth);
+
                   return (
                     <g key={item.label}>
                       <rect
@@ -366,21 +382,7 @@ export default function SummaryPage() {
                         y={0}
                         width={cellWidth}
                         height={18}
-                        fill={
-                          item.value === -3
-                            ? "#ef4444"
-                            : item.value === -2
-                            ? "#f59e0b"
-                            : item.value === -1
-                            ? "#eab308"
-                            : item.value === 0
-                            ? "#22c55e"
-                            : item.value === 1
-                            ? "#eab308"
-                            : item.value === 2
-                            ? "#f59e0b"
-                            : "#ef4444"
-                        }
+                        fill={item.fill}
                         stroke="#111827"
                       />
                       <text
@@ -401,6 +403,7 @@ export default function SummaryPage() {
                   const value = -3 + i * 0.5;
                   const x = xForBalance(value, graphLeft, graphWidth);
                   const isMajor = Number.isInteger(value);
+
                   return (
                     <line
                       key={value}
@@ -410,7 +413,7 @@ export default function SummaryPage() {
                       y2={svgHeight}
                       stroke="#6b7280"
                       strokeDasharray={isMajor ? "0" : "4 4"}
-                      strokeWidth={isMajor ? 1.2 : 0.7}
+                      strokeWidth={isMajor ? 1.1 : 0.7}
                     />
                   );
                 })}
@@ -495,9 +498,20 @@ export default function SummaryPage() {
                       (c) => c.cornerId === cornerId
                     );
 
-                    phaseRows.forEach((phase, phaseIndex) => {
+                    const phasesToPlot =
+                      mode === "all"
+                        ? phaseRows
+                        : phaseRows.filter((phase) => {
+                            if (mode === "entry") return phase.key === "entryBalanceValue";
+                            if (mode === "mid") return phase.key === "midBalanceValue";
+                            return phase.key === "exitBalanceValue";
+                          });
+
+                    phasesToPlot.forEach((phase) => {
                       const value = feedback?.[phase.key];
                       if (typeof value !== "number") return;
+
+                      const phaseIndex = phaseRows.findIndex((p) => p.key === phase.key);
 
                       const x = xForBalance(value, graphLeft, graphWidth);
                       const y =
@@ -528,21 +542,22 @@ export default function SummaryPage() {
 
                   const blockY =
                     headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
-                  const text = corner.comments
-                    .map((entry) => `${entry.driverName}: ${entry.comment}`)
-                    .join(" | ");
 
-                  return (
+                  const maxCommentLines = 3;
+                  const lineHeight = 11;
+
+                  return corner.comments.slice(0, maxCommentLines).map((entry, index) => (
                     <text
-                      key={`comment-${corner.cornerId}`}
+                      key={`comment-${corner.cornerId}-${entry.driverName}-${index}`}
                       x={commentLeft + 8}
-                      y={blockY + rowHeight + 18}
-                      fontSize="11"
+                      y={blockY + 16 + index * lineHeight}
+                      fontSize="10"
                       fill="#111827"
                     >
-                      {text}
+                      <tspan fontWeight="700">{entry.driverName}: </tspan>
+                      <tspan>{entry.comment}</tspan>
                     </text>
-                  );
+                  ));
                 })}
               </svg>
             </div>
