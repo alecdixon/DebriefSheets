@@ -1,224 +1,290 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type Corner = {
+type TurnColor = "normal" | "blue" | "green" | "red";
+
+type TurnMarker = {
   id: number;
-  x: number;
-  y: number;
+  label: number;
+  x: number; // percent
+  y: number; // percent
+  color: TurnColor;
 };
 
-type Template = {
+type LocalTemplate = {
   id: string;
-  track_name: string;
   team: string;
-  corner_count: number;
-  track_map_url: string | null;
-  corners: Corner[];
+  trackName: string;
+  trackMapDataUrl: string;
+  turnCount: number;
+  turns: TurnMarker[];
+  createdAt: string;
 };
 
-const TEAM_OPTIONS = [
-  "GB3",
-  "GT3",
-  "British F4",
-  "FIA F3",
-  "FIA F2",
-  "FREC",
-];
+const TEAM_OPTIONS = ["GB3", "GT3", "British F4", "FIA F3", "FIA F2", "FREC"];
+const STORAGE_KEY = "debrief_local_templates_v1";
 
-function normaliseCorners(corners: Corner[]): Corner[] {
-  return corners.map((corner, index) => ({
-    ...corner,
-    id: index + 1,
-  }));
+function colourButtonClass(active: boolean) {
+  return active
+    ? "border-[#E10600] bg-[#E10600] text-white"
+    : "border-[#2A3441] bg-[#1B2430] text-white";
+}
+
+function markerClass(color: TurnColor) {
+  switch (color) {
+    case "blue":
+      return "bg-blue-600 text-white border-blue-400";
+    case "green":
+      return "bg-green-600 text-white border-green-400";
+    case "red":
+      return "bg-red-600 text-white border-red-400";
+    default:
+      return "bg-black text-white border-white/20";
+  }
+}
+
+function buildInitialTurns(count: number): TurnMarker[] {
+  if (count <= 0) return [];
+
+  const cols = Math.min(4, count);
+  const rows = Math.ceil(count / cols);
+
+  return Array.from({ length: count }, (_, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+
+    const x = 16 + (col / Math.max(cols - 1, 1)) * 68;
+    const y = 18 + (row / Math.max(rows - 1, 1)) * 64;
+
+    return {
+      id: i + 1,
+      label: i + 1,
+      x,
+      y,
+      color: "normal" as TurnColor,
+    };
+  });
+}
+
+function readTemplates(): LocalTemplate[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as LocalTemplate[];
+  } catch {
+    return [];
+  }
+}
+
+function writeTemplates(templates: LocalTemplate[]) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
 }
 
 export default function CreatorPage() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [team, setTeam] = useState("GB3");
   const [trackName, setTrackName] = useState("");
-  const [trackMapUrl, setTrackMapUrl] = useState("");
-  const [corners, setCorners] = useState<Corner[]>([]);
-
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
-
+  const [trackMapDataUrl, setTrackMapDataUrl] = useState("");
+  const [turnCount, setTurnCount] = useState("10");
+  const [turns, setTurns] = useState<TurnMarker[]>([]);
+  const [selectedColour, setSelectedColour] = useState<TurnColor>("normal");
   const [status, setStatus] = useState("");
-  const [loadingTemplates, setLoadingTemplates] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  const [mapAspectRatio, setMapAspectRatio] = useState<number>(1);
+  const [generatedLink, setGeneratedLink] = useState("");
+  const [mapAspectRatio, setMapAspectRatio] = useState<number>(1.6);
   const [origin, setOrigin] = useState("");
+  const [savedTemplates, setSavedTemplates] = useState<LocalTemplate[]>([]);
+
+  const dragRef = useRef<{
+    pointerId: number | null;
+    markerId: number | null;
+    moved: boolean;
+  }>({
+    pointerId: null,
+    markerId: null,
+    moved: false,
+  });
 
   useEffect(() => {
     setOrigin(window.location.origin);
+    setSavedTemplates(readTemplates());
   }, []);
 
-  useEffect(() => {
-    loadTemplates();
-  }, []);
+  const canGenerate = useMemo(() => {
+    return (
+      team.trim() !== "" &&
+      trackName.trim() !== "" &&
+      trackMapDataUrl.trim() !== "" &&
+      turns.length > 0
+    );
+  }, [team, trackName, trackMapDataUrl, turns]);
 
-  async function loadTemplates() {
-    setLoadingTemplates(true);
+  function handleSelectTrackMapClick() {
+    fileInputRef.current?.click();
+  }
 
-    const { data, error } = await supabase
-      .from("debrief_templates")
-      .select("id, track_name, team, corner_count, track_map_url, corners")
-      .order("track_name", { ascending: true });
+  function handleTrackMapFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    if (error) {
-      setStatus(`Failed to load templates: ${error.message}`);
-    } else {
-      setTemplates((data ?? []) as Template[]);
+    if (!file.type.startsWith("image/")) {
+      setStatus("Please select a valid image file.");
+      return;
     }
 
-    setLoadingTemplates(false);
-  }
-
-  const selectedTemplate = useMemo(() => {
-    return templates.find((template) => template.id === selectedTemplateId) ?? null;
-  }, [templates, selectedTemplateId]);
-
-  const nextCornerNumber = useMemo(() => corners.length + 1, [corners.length]);
-
-  function resetForm() {
-    setSelectedTemplateId(null);
-    setTeam("GB3");
-    setTrackName("");
-    setTrackMapUrl("");
-    setCorners([]);
-    setMapAspectRatio(1);
-    setStatus("");
-  }
-
-  function loadTemplateIntoForm(template: Template) {
-    setSelectedTemplateId(template.id);
-    setTeam(template.team || "GB3");
-    setTrackName(template.track_name || "");
-    setTrackMapUrl(template.track_map_url || "");
-    setCorners(normaliseCorners(template.corners || []));
-    setStatus(`Editing template: ${template.track_name}`);
-  }
-
-  function addCornerFromClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!trackMapUrl.trim()) return;
-
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-
-    const newCorner: Corner = {
-      id: nextCornerNumber,
-      x,
-      y,
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") {
+        setTrackMapDataUrl(result);
+        setStatus(`Loaded track map: ${file.name}`);
+      }
     };
-
-    setCorners((prev) => [...prev, newCorner]);
+    reader.readAsDataURL(file);
   }
 
-  function removeLastCorner() {
-    setCorners((prev) => prev.slice(0, -1));
+  function handleGenerateTurns() {
+    const count = Number(turnCount);
+
+    if (!Number.isFinite(count) || count <= 0) {
+      setStatus("Please enter a valid number of turns.");
+      return;
+    }
+
+    setTurns(buildInitialTurns(count));
+    setStatus(`${count} turns generated. Drag them onto the corners.`);
   }
 
-  function resetCorners() {
-    setCorners([]);
-  }
+  function updateMarkerPosition(
+    markerId: number,
+    clientX: number,
+    clientY: number,
+    container: HTMLDivElement
+  ) {
+    const rect = container.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * 100;
+    const y = ((clientY - rect.top) / rect.height) * 100;
 
-  function removeCorner(cornerId: number) {
-    setCorners((prev) =>
-      normaliseCorners(prev.filter((corner) => corner.id !== cornerId))
+    const clampedX = Math.max(3, Math.min(97, x));
+    const clampedY = Math.max(4, Math.min(96, y));
+
+    setTurns((prev) =>
+      prev.map((turn) =>
+        turn.id === markerId ? { ...turn, x: clampedX, y: clampedY } : turn
+      )
     );
   }
 
-  async function handleSaveTemplate() {
-    if (!trackName.trim()) {
-      setStatus("Please enter a track name.");
-      return;
-    }
+  function handleMarkerPointerDown(
+    e: React.PointerEvent<HTMLButtonElement>,
+    markerId: number
+  ) {
+    e.stopPropagation();
+    dragRef.current = {
+      pointerId: e.pointerId,
+      markerId,
+      moved: false,
+    };
+  }
 
-    if (!team.trim()) {
-      setStatus("Please select a team.");
-      return;
-    }
+  function handlePreviewPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (drag.pointerId !== e.pointerId || drag.markerId === null) return;
 
-    if (!trackMapUrl.trim()) {
-      setStatus("Please enter a track map URL.");
-      return;
-    }
+    dragRef.current.moved = true;
+    updateMarkerPosition(drag.markerId, e.clientX, e.clientY, e.currentTarget);
+  }
 
-    if (corners.length === 0) {
-      setStatus("Please place at least one corner on the map.");
-      return;
-    }
+  function handlePreviewPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (drag.pointerId !== e.pointerId || drag.markerId === null) return;
 
-    try {
-      setSaving(true);
-      setStatus(selectedTemplateId ? "Updating template..." : "Saving template...");
+    const markerId = drag.markerId;
+    const moved = drag.moved;
 
-      const payload = {
-        track_name: trackName.trim(),
-        team,
-        corner_count: corners.length,
-        track_map_url: trackMapUrl.trim(),
-        corners: normaliseCorners(corners),
-      };
+    dragRef.current = {
+      pointerId: null,
+      markerId: null,
+      moved: false,
+    };
 
-      if (selectedTemplateId) {
-        const { error } = await supabase
-          .from("debrief_templates")
-          .update(payload)
-          .eq("id", selectedTemplateId);
-
-        if (error) {
-          setStatus(`Failed to update template: ${error.message}`);
-          return;
-        }
-
-        setStatus("Template updated successfully.");
-      } else {
-        const { error } = await supabase
-          .from("debrief_templates")
-          .insert([payload]);
-
-        if (error) {
-          setStatus(`Failed to save template: ${error.message}`);
-          return;
-        }
-
-        setStatus(`Template saved successfully for ${team}.`);
-      }
-
-      await loadTemplates();
-      resetForm();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setStatus(`Failed to save template: ${message}`);
-    } finally {
-      setSaving(false);
+    if (!moved) {
+      setTurns((prev) =>
+        prev.map((turn) =>
+          turn.id === markerId ? { ...turn, color: selectedColour } : turn
+        )
+      );
     }
   }
 
-  async function handleDeleteTemplate(templateId: string) {
-    const confirmed = window.confirm("Delete this template?");
-    if (!confirmed) return;
+  function saveTemplateToLocalStorage(templateId?: string) {
+    const id = templateId ?? `tpl_${Date.now()}`;
 
-    const { error } = await supabase
-      .from("debrief_templates")
-      .delete()
-      .eq("id", templateId);
+    const template: LocalTemplate = {
+      id,
+      team,
+      trackName: trackName.trim(),
+      trackMapDataUrl,
+      turnCount: turns.length,
+      turns,
+      createdAt: new Date().toISOString(),
+    };
 
-    if (error) {
-      setStatus(`Failed to delete template: ${error.message}`);
+    const existing = readTemplates();
+    const withoutCurrent = existing.filter((item) => item.id !== id);
+    const updated = [template, ...withoutCurrent];
+
+    writeTemplates(updated);
+    setSavedTemplates(updated);
+
+    return template;
+  }
+
+  function handleSaveTemplateLocally() {
+    if (!canGenerate) {
+      setStatus("Please choose a team, enter a track name, select a map, and generate turns first.");
       return;
     }
 
-    if (selectedTemplateId === templateId) {
-      resetForm();
+    const saved = saveTemplateToLocalStorage();
+    setStatus(`Template saved locally: ${saved.trackName} (${saved.team})`);
+  }
+
+  function handleGenerateDriverLink() {
+    if (!canGenerate) {
+      setStatus("Please complete the template first.");
+      return;
     }
 
-    setStatus("Template deleted.");
-    await loadTemplates();
+    const saved = saveTemplateToLocalStorage();
+    const link = `${origin}/driver?localTemplateId=${saved.id}`;
+    setGeneratedLink(link);
+    setStatus("Driver link generated.");
+  }
+
+  function handleCopyLink() {
+    if (!generatedLink) return;
+    navigator.clipboard.writeText(generatedLink);
+    setStatus("Link copied to clipboard.");
+  }
+
+  function handleLoadSavedTemplate(template: LocalTemplate) {
+    setTeam(template.team);
+    setTrackName(template.trackName);
+    setTrackMapDataUrl(template.trackMapDataUrl);
+    setTurnCount(String(template.turnCount));
+    setTurns(template.turns);
+    setGeneratedLink(`${origin}/driver?localTemplateId=${template.id}`);
+    setStatus(`Loaded local template: ${template.trackName}`);
+  }
+
+  function handleDeleteSavedTemplate(templateId: string) {
+    const updated = readTemplates().filter((item) => item.id !== templateId);
+    writeTemplates(updated);
+    setSavedTemplates(updated);
+    setStatus("Local template deleted.");
   }
 
   return (
@@ -232,29 +298,13 @@ export default function CreatorPage() {
             Debrief Template Creator
           </h1>
           <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
-            Create and edit team-specific debrief templates. The team saved on the
-            template controls which engineers appear on the driver page.
+            Create a local team-specific template, drag turns onto the map, colour-code
+            the markers, save locally, and generate a driver link.
           </p>
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
-            >
-              New Template
-            </button>
-
-            {selectedTemplate && (
-              <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-4 py-2 text-sm text-white">
-                Editing: {selectedTemplate.track_name}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="mb-2 block text-sm font-medium text-white">
                 Team
@@ -274,7 +324,7 @@ export default function CreatorPage() {
 
             <div>
               <label className="mb-2 block text-sm font-medium text-white">
-                Track name
+                Track Name
               </label>
               <input
                 value={trackName}
@@ -285,69 +335,118 @@ export default function CreatorPage() {
             </div>
           </div>
 
-          <div className="mt-4">
-            <label className="mb-2 block text-sm font-medium text-white">
-              Track map URL
-            </label>
-            <input
-              value={trackMapUrl}
-              onChange={(e) => setTrackMapUrl(e.target.value)}
-              className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
-              placeholder="Paste image URL"
-            />
-          </div>
+          <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end">
+            <div className="flex-1">
+              <label className="mb-2 block text-sm font-medium text-white">
+                Track Map
+              </label>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={handleSelectTrackMapClick}
+                  className="rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500]"
+                >
+                  Select Track Map
+                </button>
+                <span className="self-center text-sm text-[#9CA3AF]">
+                  JPG, PNG, WEBP supported
+                </span>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".jpg,.jpeg,.png,.webp,image/png,image/jpeg,image/webp"
+                onChange={handleTrackMapFileChange}
+                className="hidden"
+              />
+            </div>
 
-          <div className="mt-4 flex flex-wrap gap-2 text-sm">
-            <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
-              Team: {team}
+            <div className="w-full lg:w-[220px]">
+              <label className="mb-2 block text-sm font-medium text-white">
+                Amount of Turns
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={turnCount}
+                onChange={(e) => setTurnCount(e.target.value)}
+                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
+              />
             </div>
-            <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
-              Corners placed: {corners.length}
-            </div>
+
+            <button
+              type="button"
+              onClick={handleGenerateTurns}
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+            >
+              Generate Turns
+            </button>
           </div>
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-4 shadow-2xl md:p-6">
-          <div className="mb-5 flex flex-col gap-4 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-5 flex flex-col gap-4 border-b border-[#2A3441] pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-2xl font-semibold text-white">Track Map</h2>
+              <h2 className="text-2xl font-semibold text-white">Track Map Preview</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Click on the map to place corners in order. Click the small remove
-                button in the list below to delete a specific corner.
+                Drag the turn numbers onto the corners. Tap a turn to apply the selected colour mode.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={removeLastCorner}
-                className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                onClick={() => setSelectedColour("normal")}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
+                  selectedColour === "normal"
+                )}`}
               >
-                Remove Last Corner
+                Normal
               </button>
-
               <button
                 type="button"
-                onClick={resetCorners}
-                className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                onClick={() => setSelectedColour("blue")}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
+                  selectedColour === "blue"
+                )}`}
               >
-                Reset All Corners
+                Blue
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedColour("green")}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
+                  selectedColour === "green"
+                )}`}
+              >
+                Green
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedColour("red")}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
+                  selectedColour === "red"
+                )}`}
+              >
+                Red
               </button>
             </div>
           </div>
 
           <div className="rounded-[24px] bg-[#111827] p-3 sm:p-4">
-            <div className="mx-auto w-full max-w-[760px]">
+            <div className="mx-auto w-full max-w-[900px]">
               <div
                 className="relative w-full overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
                 style={{ aspectRatio: String(mapAspectRatio) }}
-                onClick={addCornerFromClick}
+                onPointerMove={handlePreviewPointerMove}
+                onPointerUp={handlePreviewPointerUp}
+                onPointerLeave={handlePreviewPointerUp}
               >
-                {trackMapUrl.trim() ? (
+                {trackMapDataUrl ? (
                   <>
                     <img
-                      src={trackMapUrl}
-                      alt="Track map"
+                      src={trackMapDataUrl}
+                      alt="Track map preview"
                       className="absolute inset-0 h-full w-full"
                       onLoad={(e) => {
                         const img = e.currentTarget;
@@ -357,89 +456,68 @@ export default function CreatorPage() {
                       }}
                     />
 
-                    {corners.map((corner) => (
+                    {turns.map((turn) => (
                       <button
-                        key={corner.id}
+                        key={turn.id}
                         type="button"
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#E10600] bg-[#E10600] px-2.5 py-1 text-sm font-semibold text-white shadow-lg sm:px-3 sm:py-1.5 sm:text-base"
+                        onPointerDown={(e) => handleMarkerPointerDown(e, turn.id)}
+                        className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1.5 text-sm font-semibold shadow-lg transition sm:text-base ${markerClass(
+                          turn.color
+                        )}`}
                         style={{
-                          left: `${corner.x}%`,
-                          top: `${corner.y}%`,
+                          left: `${turn.x}%`,
+                          top: `${turn.y}%`,
+                          touchAction: "none",
                         }}
                       >
-                        T{corner.id}
+                        {turn.label}
                       </button>
                     ))}
                   </>
                 ) : (
-                  <div className="flex h-full min-h-[280px] items-center justify-center px-6 text-center text-sm text-[#9CA3AF]">
-                    Paste a track map URL above to start placing corners.
+                  <div className="flex h-full min-h-[320px] items-center justify-center px-6 text-center text-sm text-[#9CA3AF]">
+                    Select a track map, then generate turns.
                   </div>
                 )}
               </div>
             </div>
           </div>
-
-          {corners.length > 0 && (
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {corners.map((corner) => (
-                <div
-                  key={corner.id}
-                  className="flex items-center justify-between rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3"
-                >
-                  <div className="text-sm text-white">
-                    T{corner.id} — x {corner.x.toFixed(1)} / y {corner.y.toFixed(1)}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => removeCorner(corner.id)}
-                    className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 transition hover:bg-red-500/20"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
-          <h2 className="text-2xl font-semibold text-white">
-            {selectedTemplateId ? "Update Template" : "Save Template"}
-          </h2>
-          <p className="mt-2 text-sm text-[#9CA3AF]">
-            Saving the template stores the selected team as well, so the driver page
-            can show only that team’s engineers.
-          </p>
-
-          <div className="mt-5 flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={handleSaveTemplate}
-              disabled={saving}
-              className="rounded-2xl bg-[#E10600] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500] disabled:opacity-60"
+              onClick={handleSaveTemplateLocally}
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
             >
-              {saving
-                ? selectedTemplateId
-                  ? "Updating..."
-                  : "Saving..."
-                : selectedTemplateId
-                ? "Update Template"
-                : "Save Template"}
+              Save Template Locally
             </button>
 
-            {selectedTemplateId && (
+            <button
+              type="button"
+              onClick={handleGenerateDriverLink}
+              className="rounded-2xl bg-[#E10600] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500]"
+            >
+              Generate Driver Link
+            </button>
+
+            {generatedLink && (
               <button
                 type="button"
-                onClick={resetForm}
+                onClick={handleCopyLink}
                 className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
               >
-                Cancel Editing
+                Copy Link
               </button>
             )}
           </div>
+
+          {generatedLink && (
+            <div className="mt-4 rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF] break-all">
+              {generatedLink}
+            </div>
+          )}
 
           {status && (
             <div className="mt-4 rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
@@ -449,91 +527,65 @@ export default function CreatorPage() {
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
-          <div className="flex flex-col gap-3 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-2xl font-semibold text-white">Existing Templates</h2>
-              <p className="mt-2 text-sm text-[#9CA3AF]">
-                Select a template to edit it, or open its driver page directly.
-              </p>
-            </div>
-          </div>
+          <h2 className="text-2xl font-semibold text-white">Saved Local Templates</h2>
+          <p className="mt-2 text-sm text-[#9CA3AF]">
+            These are stored in this browser only.
+          </p>
 
-          {loadingTemplates ? (
-            <p className="mt-5 text-sm text-[#9CA3AF]">Loading templates...</p>
-          ) : templates.length === 0 ? (
-            <p className="mt-5 text-sm text-[#9CA3AF]">No templates saved yet.</p>
+          {savedTemplates.length === 0 ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">No local templates saved yet.</p>
           ) : (
             <div className="mt-5 grid gap-4">
-              {templates.map((template) => {
-                const driverPath = `/driver/${template.id}`;
-                const driverUrl = origin ? `${origin}${driverPath}` : driverPath;
-                const isEditing = selectedTemplateId === template.id;
-
-                return (
-                  <div
-                    key={template.id}
-                    className={`rounded-3xl border p-4 ${
-                      isEditing
-                        ? "border-[#E10600] bg-[#161D27]"
-                        : "border-[#2A3441] bg-[#111827]"
-                    }`}
-                  >
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap gap-2">
-                          <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
-                            {template.team || "No team"}
-                          </span>
-                          <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
-                            {template.corner_count} corners
-                          </span>
-                        </div>
-
-                        <h3 className="text-xl font-semibold text-white">
-                          {template.track_name}
-                        </h3>
-
-                        <p className="break-all text-sm text-[#9CA3AF]">
-                          {driverUrl}
-                        </p>
+              {savedTemplates.map((template) => (
+                <div
+                  key={template.id}
+                  className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4"
+                >
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
+                          {template.team}
+                        </span>
+                        <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
+                          {template.turnCount} turns
+                        </span>
                       </div>
+                      <h3 className="text-xl font-semibold text-white">
+                        {template.trackName}
+                      </h3>
+                    </div>
 
-                      <div className="flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={() => loadTemplateIntoForm(template)}
-                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
-                        >
-                          Edit Template
-                        </button>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleLoadSavedTemplate(template)}
+                        className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                      >
+                        Load
+                      </button>
 
-                        <Link
-                          href={driverPath}
-                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
-                        >
-                          Open Driver Page
-                        </Link>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setGeneratedLink(`${origin}/driver?localTemplateId=${template.id}`)
+                        }
+                        className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                      >
+                        Build Link
+                      </button>
 
-                        <button
-                          type="button"
-                          onClick={() => navigator.clipboard.writeText(driverUrl)}
-                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
-                        >
-                          Copy Link
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTemplate(template.id)}
-                          className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSavedTemplate(template.id)}
+                        className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           )}
         </section>
