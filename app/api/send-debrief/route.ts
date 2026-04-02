@@ -701,7 +701,7 @@ export async function POST(request: Request) {
       reliabilityFlags,
       cornerFeedback,
       team,
-      templateID,
+      templateId,
     }: {
       driverName: string;
       sessionName: string;
@@ -716,7 +716,7 @@ export async function POST(request: Request) {
       reliabilityFlags: Record<string, boolean>;
       cornerFeedback: CornerFeedback[];
       team?: string;
-      templateID?: string;
+      templateId?: string;
     } = body;
 
     if (!driverName || !primaryRecipientEmail || !trackName) {
@@ -734,7 +734,7 @@ export async function POST(request: Request) {
     .from("submitted_debriefs")
    .insert({
      team: team ?? null,
-      template_ID: templateID ?? null,
+      template_id: templateId ?? null,
       track_name: trackName,
       session_name: sessionName ?? null,
       driver_name: driverName,
