@@ -302,9 +302,9 @@ export default function DriverTemplatePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0A0E14] px-4 py-8 text-white md:px-8">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] px-6 py-7 shadow-2xl md:px-8">
+    <main className="min-h-screen bg-[#0A0E14] px-4 py-6 text-white md:px-8 md:py-8">
+      <div className="mx-auto max-w-5xl space-y-5 md:space-y-6">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] px-5 py-6 shadow-2xl md:px-8 md:py-7">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#E10600]">
             Rodin Motorsport
           </p>
@@ -317,7 +317,7 @@ export default function DriverTemplatePage() {
           {loadError && <p className="mt-3 text-sm text-red-300">{loadError}</p>}
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <div className="grid gap-4 md:grid-cols-2">
             <input
               className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
@@ -334,7 +334,7 @@ export default function DriverTemplatePage() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <h2 className="text-2xl font-semibold text-white">Reliability</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
             Optional: tap only the items that had an issue.
@@ -361,7 +361,7 @@ export default function DriverTemplatePage() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-6">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-4 shadow-2xl md:p-6">
           <div className="mb-5 flex flex-col gap-4 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-2xl font-semibold text-white">Track Map</h2>
@@ -394,82 +394,90 @@ export default function DriverTemplatePage() {
             </div>
           </div>
 
-          <div className="rounded-[24px] bg-[#111827] p-4">
-            <div
-              className="relative min-h-[520px] overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
-              onClick={(e) => {
-                if (!addMarkerMode) return;
+          <div className="rounded-[24px] bg-[#111827] p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[720px]">
+              <div
+                className="relative aspect-[4/3] w-full overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
+                onClick={(e) => {
+                  if (!addMarkerMode) return;
 
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = ((e.clientX - rect.left) / rect.width) * 100;
-                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = ((e.clientX - rect.left) / rect.width) * 100;
+                  const y = ((e.clientY - rect.top) / rect.height) * 100;
 
-                const newMarker: IncidentMarker = {
-                  id: Date.now(),
-                  x,
-                  y,
-                  note: "",
-                };
+                  const newMarker: IncidentMarker = {
+                    id: Date.now(),
+                    x,
+                    y,
+                    note: "",
+                  };
 
-                setIncidentMarkers((prev) => [...prev, newMarker]);
-                setSelectedIncidentId(newMarker.id);
-                setSelectedCornerId(null);
-                setAddMarkerMode(false);
-              }}
-            >
-              {template.track_map_url && (
-                <img
-                  src={template.track_map_url}
-                  alt="Track map"
-                  className="h-full w-full object-contain"
-                />
-              )}
+                  setIncidentMarkers((prev) => [...prev, newMarker]);
+                  setSelectedIncidentId(newMarker.id);
+                  setSelectedCornerId(null);
+                  setAddMarkerMode(false);
+                }}
+              >
+                {template.track_map_url && (
+                  <img
+                    src={template.track_map_url}
+                    alt="Track map"
+                    className="absolute inset-0 h-full w-full object-contain"
+                  />
+                )}
 
-              {template.corners.map((corner) => (
-                <button
-                  key={corner.id}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedCornerId(corner.id);
-                    setSelectedIncidentId(null);
-                  }}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1 text-base font-semibold text-white shadow-lg transition ${
-                    selectedCornerId === corner.id
-                      ? "border-[#E10600] bg-[#E10600]"
-                      : "border-[#2A3441] bg-[#141A22]/95"
-                  }`}
-                  style={{ left: `${corner.x}%`, top: `${corner.y}%` }}
-                >
-                  T{corner.id}
-                </button>
-              ))}
+                {template.corners.map((corner) => (
+                  <button
+                    key={corner.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedCornerId(corner.id);
+                      setSelectedIncidentId(null);
+                    }}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border font-semibold text-white shadow-lg transition ${
+                      selectedCornerId === corner.id
+                        ? "border-[#E10600] bg-[#E10600]"
+                        : "border-[#2A3441] bg-[#141A22]/95"
+                    } px-2.5 py-1 text-sm sm:px-3 sm:py-1.5 sm:text-base`}
+                    style={{
+                      left: `${corner.x}%`,
+                      top: `${corner.y}%`,
+                    }}
+                  >
+                    T{corner.id}
+                  </button>
+                ))}
 
-              {incidentMarkers.map((marker) => (
-                <button
-                  key={marker.id}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedIncidentId(marker.id);
-                    setSelectedCornerId(null);
-                  }}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border px-2 py-1 text-sm shadow-lg transition ${
-                    selectedIncidentId === marker.id
-                      ? "border-yellow-400 bg-yellow-400 text-black"
-                      : "border-yellow-500 bg-[#141A22] text-white"
-                  }`}
-                  style={{ left: `${marker.x}%`, top: `${marker.y}%` }}
-                  title="Incident marker"
-                >
-                  🪖
-                </button>
-              ))}
+                {incidentMarkers.map((marker) => (
+                  <button
+                    key={marker.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedIncidentId(marker.id);
+                      setSelectedCornerId(null);
+                    }}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border shadow-lg transition ${
+                      selectedIncidentId === marker.id
+                        ? "border-yellow-400 bg-yellow-400 text-black"
+                        : "border-yellow-500 bg-[#141A22] text-white"
+                    } h-10 w-10 text-base sm:h-12 sm:w-12 sm:text-lg`}
+                    style={{
+                      left: `${marker.x}%`,
+                      top: `${marker.y}%`,
+                    }}
+                    title="Incident marker"
+                  >
+                    🪖
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <div className="flex flex-col gap-4 border-b border-[#2A3441] pb-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-2xl font-semibold text-white">Selected Corner</h2>
@@ -554,7 +562,7 @@ export default function DriverTemplatePage() {
         </section>
 
         {selectedIncident && (
-          <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
+          <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
             <div className="flex items-center justify-between gap-3 border-b border-[#2A3441] pb-5">
               <div>
                 <h2 className="text-2xl font-semibold text-white">Incident Marker</h2>
@@ -581,7 +589,7 @@ export default function DriverTemplatePage() {
           </section>
         )}
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <h2 className="text-2xl font-semibold text-white">Overall Debrief</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
             Summarise the main limitation and any overall comments.
@@ -604,7 +612,7 @@ export default function DriverTemplatePage() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl md:p-7">
+        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <h2 className="text-2xl font-semibold text-white">Send PDF</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
             Choose the main engineer, and optionally add one extra recipient such as the team manager.
