@@ -20,7 +20,7 @@ type Template = {
 
 type CornerFeedback = {
   cornerId: number;
-  balance: string;
+  balanceValue: number;
   comment: string;
 };
 
@@ -51,7 +51,45 @@ const reliabilityItems = [
   "Radio",
 ];
 
-const balanceOptions = ["US 3", "US 2", "US 1", "OK", "OS 1", "OS 2", "OS 3"];
+const balanceStops = [
+  { value: -3, label: "US 3" },
+  { value: -2, label: "US 2" },
+  { value: -1, label: "US 1" },
+  { value: 0, label: "OK" },
+  { value: 1, label: "OS 1" },
+  { value: 2, label: "OS 2" },
+  { value: 3, label: "OS 3" },
+];
+
+function balanceValueToLabel(value: number): string {
+  if (value <= -2.75) return "US 3";
+  if (value <= -2.25) return "US 2.5";
+  if (value <= -1.75) return "US 2";
+  if (value <= -1.25) return "US 1.5";
+  if (value <= -0.75) return "US 1";
+  if (value <= -0.25) return "US 0.5";
+  if (value < 0.25) return "OK";
+  if (value < 0.75) return "OS 0.5";
+  if (value < 1.25) return "OS 1";
+  if (value < 1.75) return "OS 1.5";
+  if (value < 2.25) return "OS 2";
+  if (value < 2.75) return "OS 2.5";
+  return "OS 3";
+}
+
+function hasMeaningfulBalance(value: number): boolean {
+  return Math.abs(value) > 0.001;
+}
+
+function balancePillClass(value: number): string {
+  if (value <= -2.25) return "bg-blue-700 text-white border-blue-500";
+  if (value <= -1.25) return "bg-blue-500/20 text-blue-200 border-blue-400/40";
+  if (value <= -0.25) return "bg-cyan-500/20 text-cyan-200 border-cyan-400/40";
+  if (value < 0.25) return "bg-green-500/20 text-green-200 border-green-400/40";
+  if (value < 1.25) return "bg-yellow-500/20 text-yellow-200 border-yellow-400/40";
+  if (value < 2.25) return "bg-orange-500/20 text-orange-200 border-orange-400/40";
+  return "bg-red-500/20 text-red-200 border-red-400/40";
+}
 
 export default function DriverTemplatePage() {
   const params = useParams();
@@ -77,6 +115,7 @@ export default function DriverTemplatePage() {
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
   const [addMarkerMode, setAddMarkerMode] = useState(false);
 
+  const [mapAspectRatio, setMapAspectRatio] = useState<number>(1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [sendStatus, setSendStatus] = useState("");
@@ -115,7 +154,7 @@ export default function DriverTemplatePage() {
           setCornerFeedback(
             cleanTemplate.corners.map((corner: Corner) => ({
               cornerId: corner.id,
-              balance: "",
+              balanceValue: 0,
               comment: "",
             }))
           );
@@ -185,7 +224,7 @@ export default function DriverTemplatePage() {
 
   const completedCorners = useMemo(() => {
     return cornerFeedback.filter(
-      (entry) => entry.balance.trim() !== "" || entry.comment.trim() !== ""
+      (entry) => hasMeaningfulBalance(entry.balanceValue) || entry.comment.trim() !== ""
     ).length;
   }, [cornerFeedback]);
 
@@ -263,7 +302,11 @@ export default function DriverTemplatePage() {
           primaryLimitation,
           overallComments,
           reliabilityFlags,
-          cornerFeedback,
+          cornerFeedback: cornerFeedback.map((entry) => ({
+            cornerId: entry.cornerId,
+            balance: balanceValueToLabel(entry.balanceValue),
+            comment: entry.comment,
+          })),
           incidentMarkers,
         }),
       });
@@ -397,7 +440,8 @@ export default function DriverTemplatePage() {
           <div className="rounded-[24px] bg-[#111827] p-3 sm:p-4">
             <div className="mx-auto w-full max-w-[720px]">
               <div
-                className="relative aspect-[4/3] w-full overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
+                className="relative w-full overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
+                style={{ aspectRatio: String(mapAspectRatio) }}
                 onClick={(e) => {
                   if (!addMarkerMode) return;
 
@@ -422,7 +466,13 @@ export default function DriverTemplatePage() {
                   <img
                     src={template.track_map_url}
                     alt="Track map"
-                    className="absolute inset-0 h-full w-full object-contain"
+                    className="absolute inset-0 h-full w-full"
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                        setMapAspectRatio(img.naturalWidth / img.naturalHeight);
+                      }
+                    }}
                   />
                 )}
 
@@ -486,9 +536,18 @@ export default function DriverTemplatePage() {
               </p>
             </div>
 
-            {selectedCorner && (
-              <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-4 py-2 text-sm text-white">
-                Corner T{selectedCorner.id}
+            {selectedCorner && selectedCornerEntry && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-4 py-2 text-sm text-white">
+                  Corner T{selectedCorner.id}
+                </div>
+                <div
+                  className={`rounded-full border px-4 py-2 text-sm font-semibold ${balancePillClass(
+                    selectedCornerEntry.balanceValue
+                  )}`}
+                >
+                  {balanceValueToLabel(selectedCornerEntry.balanceValue)}
+                </div>
               </div>
             )}
           </div>
@@ -498,29 +557,43 @@ export default function DriverTemplatePage() {
           ) : (
             <div className="mt-5 space-y-5">
               <div>
-                <label className="mb-2 block text-sm font-medium text-white">
+                <label className="mb-3 block text-sm font-medium text-white">
                   Balance
                 </label>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-                  {balanceOptions.map((option) => {
-                    const active = selectedCornerEntry.balance === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() =>
-                          updateCornerFeedback(selectedCorner.id, { balance: option })
-                        }
-                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                          active
-                            ? "border-[#E10600] bg-[#E10600] text-white"
-                            : "border-[#2A3441] bg-[#1B2430] text-white hover:border-[#E10600]"
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
+
+                <div className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4">
+                  <div className="mb-3 h-4 w-full rounded-full bg-gradient-to-r from-blue-700 via-cyan-400 via-green-500 via-yellow-400 via-orange-500 to-red-600" />
+
+                  <input
+                    type="range"
+                    min={-3}
+                    max={3}
+                    step={0.5}
+                    value={selectedCornerEntry.balanceValue}
+                    onChange={(e) =>
+                      updateCornerFeedback(selectedCorner.id, {
+                        balanceValue: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-[#E10600]"
+                  />
+
+                  <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] text-[#9CA3AF] sm:text-xs">
+                    {balanceStops.map((stop) => (
+                      <div key={stop.value}>{stop.label}</div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-[#9CA3AF]">Selected:</span>
+                    <span
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${balancePillClass(
+                        selectedCornerEntry.balanceValue
+                      )}`}
+                    >
+                      {balanceValueToLabel(selectedCornerEntry.balanceValue)}
+                    </span>
+                  </div>
                 </div>
               </div>
 
