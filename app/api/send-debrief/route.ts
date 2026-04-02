@@ -1,10 +1,13 @@
 import { Resend } from "resend";
 import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
 
+type TurnColor = "normal" | "blue" | "green" | "red";
+
 type Corner = {
   id: number;
   x: number;
   y: number;
+  color?: TurnColor;
 };
 
 type CornerFeedback = {
@@ -48,7 +51,7 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
 
 function getBalanceColor(value?: number) {
   if (value === undefined || value === null) {
-    return rgb(0.2, 0.6, 0.2);
+    return rgb(0.18, 0.68, 0.35);
   }
 
   if (value <= -2.25) return rgb(0.12, 0.34, 0.78);
@@ -58,6 +61,19 @@ function getBalanceColor(value?: number) {
   if (value < 1.25) return rgb(0.86, 0.71, 0.14);
   if (value < 2.25) return rgb(0.91, 0.48, 0.15);
   return rgb(0.82, 0.19, 0.18);
+}
+
+function getTurnColor(color?: TurnColor) {
+  switch (color) {
+    case "blue":
+      return rgb(0.16, 0.39, 0.86);
+    case "green":
+      return rgb(0.17, 0.69, 0.33);
+    case "red":
+      return rgb(0.87, 0.21, 0.18);
+    default:
+      return rgb(0.08, 0.1, 0.13);
+  }
 }
 
 async function buildDebriefPdf(payload: {
@@ -162,6 +178,37 @@ async function buildDebriefPdf(payload: {
     });
   }
 
+  function drawTurnChip(
+    page: PDFPage,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    color?: TurnColor
+  ) {
+    const fill = getTurnColor(color);
+
+    page.drawRectangle({
+      x,
+      y,
+      width,
+      height,
+      color: fill,
+      borderColor: colors.border,
+      borderWidth: 0.8,
+    });
+
+    const textWidth = bold.widthOfTextAtSize(label, 8.5);
+    page.drawText(label, {
+      x: x + (width - textWidth) / 2,
+      y: y + height / 2 - 3.5,
+      size: 8.5,
+      font: bold,
+      color: colors.text,
+    });
+  }
+
   async function drawTrackMapPanel(
     page: PDFPage,
     x: number,
@@ -226,7 +273,7 @@ async function buildDebriefPdf(payload: {
           x: markerX,
           y: markerY,
           size: 12,
-          color: colors.accent,
+          color: getTurnColor(corner.color),
           borderColor: colors.text,
           borderWidth: 1.5,
         });
@@ -420,6 +467,7 @@ async function buildDebriefPdf(payload: {
     });
   });
 
+  const cornerLookup = new Map(payload.corners.map((corner) => [corner.id, corner]));
   const sortedRows = [...payload.cornerFeedback].sort((a, b) => a.cornerId - b.cornerId);
 
   let currentPage = addPage();
@@ -521,13 +569,17 @@ async function buildDebriefPdf(payload: {
       borderWidth: 1,
     });
 
-    currentPage.drawText(`T${row.cornerId}`, {
-      x: margin + 10,
-      y: cursorY - 10,
-      size: 10,
-      font,
-      color: colors.text,
-    });
+    const cornerMeta = cornerLookup.get(row.cornerId);
+
+    drawTurnChip(
+      currentPage,
+      margin + 8,
+      cursorY - 17,
+      42,
+      18,
+      `T${row.cornerId}`,
+      cornerMeta?.color
+    );
 
     const chipY = cursorY - 17;
     drawBalanceChip(currentPage, margin + 66, chipY, 52, 18, row.entryBalance || "-", row.entryBalanceValue);
