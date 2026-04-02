@@ -22,6 +22,34 @@ type IncidentMarker = {
   note: string;
 };
 
+type BuildDebriefPdfPayload = {
+  driverName: string;
+  sessionName: string;
+  trackName: string;
+  trackMapUrl?: string | null;
+  corners: Corner[];
+  incidentMarkers: IncidentMarker[];
+  primaryLimitation?: string;
+  overallComments?: string;
+  reliabilityFlags: Record<string, boolean>;
+  cornerFeedback: CornerFeedback[];
+};
+
+type PostBody = {
+  driverName: string;
+  sessionName: string;
+  trackName: string;
+  trackMapUrl?: string | null;
+  corners?: Corner[];
+  incidentMarkers?: IncidentMarker[];
+  primaryRecipientEmail: string;
+  extraRecipientEmail?: string;
+  primaryLimitation?: string;
+  overallComments?: string;
+  reliabilityFlags?: Record<string, boolean>;
+  cornerFeedback?: CornerFeedback[];
+};
+
 function wrapText(text: string, maxCharsPerLine: number): string[] {
   if (!text?.trim()) return ["-"];
 
@@ -43,18 +71,7 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   return lines;
 }
 
-async function buildDebriefPdf(payload: {
-  driverName: string;
-  sessionName: string;
-  trackName: string;
-  trackMapUrl?: string | null;
-  corners: Corner[];
-  incidentMarkers: IncidentMarker[];
-  primaryLimitation?: string;
-  overallComments?: string;
-  reliabilityFlags: Record<string, boolean>;
-  cornerFeedback: CornerFeedback[];
-}) {
+async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -94,7 +111,7 @@ async function buildDebriefPdf(payload: {
     width: number,
     height: number,
     title: string
-  ) {
+  ): void {
     page.drawRectangle({
       x,
       y,
@@ -123,7 +140,7 @@ async function buildDebriefPdf(payload: {
     imageUrl?: string | null,
     corners: Corner[] = [],
     incidentMarkers: IncidentMarker[] = []
-  ) {
+  ): Promise<void> {
     drawPanel(page, x, y, width, height, "Track Map");
 
     if (!imageUrl) {
@@ -139,6 +156,10 @@ async function buildDebriefPdf(payload: {
 
     try {
       const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch track map: ${response.status}`);
+      }
+
       const imageBytes = await response.arrayBuffer();
       const contentType = response.headers.get("content-type") || "";
 
@@ -173,7 +194,6 @@ async function buildDebriefPdf(payload: {
       for (const corner of corners) {
         const markerX = drawX + (corner.x / 100) * drawW;
         const markerY = drawY + drawH - (corner.y / 100) * drawH;
-
         const radius = 12;
 
         page.drawCircle({
@@ -389,7 +409,7 @@ async function buildDebriefPdf(payload: {
 
   cursorY -= 28;
 
-  function drawTableHeader(page: PDFPage, y: number) {
+  function drawTableHeader(page: PDFPage, y: number): void {
     page.drawRectangle({
       x: margin,
       y: y - 16,
@@ -561,9 +581,9 @@ async function buildDebriefPdf(payload: {
   return Buffer.from(bytes);
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
-    const body = await request.json();
+    const body: PostBody = await request.json();
 
     const {
       driverName,
@@ -578,19 +598,6 @@ export async function POST(request: Request) {
       overallComments,
       reliabilityFlags,
       cornerFeedback,
-    }: {
-      driverName: string;
-      sessionName: string;
-      trackName: string;
-      trackMapUrl?: string | null;
-      corners?: Corner[];
-      incidentMarkers?: IncidentMarker[];
-      primaryRecipientEmail: string;
-      extraRecipientEmail?: string;
-      primaryLimitation?: string;
-      overallComments?: string;
-      reliabilityFlags: Record<string, boolean>;
-      cornerFeedback: CornerFeedback[];
     } = body;
 
     if (!driverName || !primaryRecipientEmail || !trackName) {
@@ -600,8 +607,19 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!process.env.RESEND_API_KEY) {
+      return Response.json(
+        { error: "Missing RESEND_API_KEY environment variable." },
+        { status: 500 }
+      );
+    }
+
     const recipients = [primaryRecipientEmail];
-    if (extraRecipientEmail && extraRecipientEmail !== primaryRecipientEmail) {
+    if (
+      extraRecipientEmail &&
+      extraRecipientEmail.trim() &&
+      extraRecipientEmail !== primaryRecipientEmail
+    ) {
       recipients.push(extraRecipientEmail);
     }
 
@@ -651,8 +669,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return Response.json(
       {
-        error:
-          error instanceof Error ? error.message : "Unknown server error",
+        error: error instanceof Error ? error.message : "Unknown server error",
       },
       { status: 500 }
     );
