@@ -1,29 +1,28 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 
 type TurnColor = "normal" | "blue" | "green" | "red";
 
-type TurnMarker = {
+type Corner = {
   id: number;
-  label: number;
-  x: number; // percent
-  y: number; // percent
+  x: number;
+  y: number;
   color: TurnColor;
 };
 
-type LocalTemplate = {
+type Template = {
   id: string;
   team: string;
-  trackName: string;
-  trackMapDataUrl: string;
-  turnCount: number;
-  turns: TurnMarker[];
-  createdAt: string;
+  track_name: string;
+  track_map_url: string | null;
+  corner_count: number;
+  corners: Corner[];
 };
 
 const TEAM_OPTIONS = ["GB3", "GT3", "British F4", "FIA F3", "FIA F2", "FREC"];
-const STORAGE_KEY = "debrief_local_templates_v1";
 
 function colourButtonClass(active: boolean) {
   return active
@@ -44,7 +43,7 @@ function markerClass(color: TurnColor) {
   }
 }
 
-function buildInitialTurns(count: number): TurnMarker[] {
+function buildInitialCorners(count: number): Corner[] {
   if (count <= 0) return [];
 
   const cols = Math.min(4, count);
@@ -59,7 +58,6 @@ function buildInitialTurns(count: number): TurnMarker[] {
 
     return {
       id: i + 1,
-      label: i + 1,
       x,
       y,
       color: "normal" as TurnColor,
@@ -67,19 +65,11 @@ function buildInitialTurns(count: number): TurnMarker[] {
   });
 }
 
-function readTemplates(): LocalTemplate[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as LocalTemplate[];
-  } catch {
-    return [];
-  }
-}
-
-function writeTemplates(templates: LocalTemplate[]) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
+function normaliseCorners(corners: Corner[]): Corner[] {
+  return corners.map((corner, index) => ({
+    ...corner,
+    id: index + 1,
+  }));
 }
 
 export default function CreatorPage() {
@@ -89,37 +79,82 @@ export default function CreatorPage() {
   const [trackName, setTrackName] = useState("");
   const [trackMapDataUrl, setTrackMapDataUrl] = useState("");
   const [turnCount, setTurnCount] = useState("10");
-  const [turns, setTurns] = useState<TurnMarker[]>([]);
+  const [corners, setCorners] = useState<Corner[]>([]);
   const [selectedColour, setSelectedColour] = useState<TurnColor>("normal");
+
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+
   const [status, setStatus] = useState("");
   const [generatedLink, setGeneratedLink] = useState("");
-  const [mapAspectRatio, setMapAspectRatio] = useState<number>(1.6);
   const [origin, setOrigin] = useState("");
-  const [savedTemplates, setSavedTemplates] = useState<LocalTemplate[]>([]);
+  const [mapAspectRatio, setMapAspectRatio] = useState<number>(1.6);
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const dragRef = useRef<{
     pointerId: number | null;
-    markerId: number | null;
+    cornerId: number | null;
     moved: boolean;
   }>({
     pointerId: null,
-    markerId: null,
+    cornerId: null,
     moved: false,
   });
 
   useEffect(() => {
     setOrigin(window.location.origin);
-    setSavedTemplates(readTemplates());
   }, []);
 
-  const canGenerate = useMemo(() => {
-    return (
-      team.trim() !== "" &&
-      trackName.trim() !== "" &&
-      trackMapDataUrl.trim() !== "" &&
-      turns.length > 0
-    );
-  }, [team, trackName, trackMapDataUrl, turns]);
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  async function loadTemplates() {
+    setLoadingTemplates(true);
+
+    const { data, error } = await supabase
+      .from("debrief_templates")
+      .select("id, team, track_name, track_map_url, corner_count, corners")
+      .order("track_name", { ascending: true });
+
+    if (error) {
+      setStatus(`Failed to load templates: ${error.message}`);
+    } else {
+      setTemplates((data ?? []) as Template[]);
+    }
+
+    setLoadingTemplates(false);
+  }
+
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.id === selectedTemplateId) ?? null,
+    [templates, selectedTemplateId]
+  );
+
+  function resetForm() {
+    setSelectedTemplateId(null);
+    setTeam("GB3");
+    setTrackName("");
+    setTrackMapDataUrl("");
+    setTurnCount("10");
+    setCorners([]);
+    setSelectedColour("normal");
+    setGeneratedLink("");
+    setMapAspectRatio(1.6);
+    setStatus("");
+  }
+
+  function loadTemplateIntoForm(template: Template) {
+    setSelectedTemplateId(template.id);
+    setTeam(template.team || "GB3");
+    setTrackName(template.track_name || "");
+    setTrackMapDataUrl(template.track_map_url || "");
+    setCorners(normaliseCorners((template.corners ?? []) as Corner[]));
+    setTurnCount(String(template.corner_count || (template.corners ?? []).length || 0));
+    setGeneratedLink(`${origin}/driver/${template.id}`);
+    setStatus(`Editing template: ${template.track_name}`);
+  }
 
   function handleSelectTrackMapClick() {
     fileInputRef.current?.click();
@@ -153,12 +188,12 @@ export default function CreatorPage() {
       return;
     }
 
-    setTurns(buildInitialTurns(count));
+    setCorners(buildInitialCorners(count));
     setStatus(`${count} turns generated. Drag them onto the corners.`);
   }
 
-  function updateMarkerPosition(
-    markerId: number,
+  function updateCornerPosition(
+    cornerId: number,
     clientX: number,
     clientY: number,
     container: HTMLDivElement
@@ -170,96 +205,149 @@ export default function CreatorPage() {
     const clampedX = Math.max(3, Math.min(97, x));
     const clampedY = Math.max(4, Math.min(96, y));
 
-    setTurns((prev) =>
-      prev.map((turn) =>
-        turn.id === markerId ? { ...turn, x: clampedX, y: clampedY } : turn
+    setCorners((prev) =>
+      prev.map((corner) =>
+        corner.id === cornerId ? { ...corner, x: clampedX, y: clampedY } : corner
       )
     );
   }
 
   function handleMarkerPointerDown(
     e: React.PointerEvent<HTMLButtonElement>,
-    markerId: number
+    cornerId: number
   ) {
     e.stopPropagation();
     dragRef.current = {
       pointerId: e.pointerId,
-      markerId,
+      cornerId,
       moved: false,
     };
   }
 
   function handlePreviewPointerMove(e: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
-    if (drag.pointerId !== e.pointerId || drag.markerId === null) return;
+    if (drag.pointerId !== e.pointerId || drag.cornerId === null) return;
 
     dragRef.current.moved = true;
-    updateMarkerPosition(drag.markerId, e.clientX, e.clientY, e.currentTarget);
+    updateCornerPosition(drag.cornerId, e.clientX, e.clientY, e.currentTarget);
   }
 
   function handlePreviewPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
-    if (drag.pointerId !== e.pointerId || drag.markerId === null) return;
+    if (drag.pointerId !== e.pointerId || drag.cornerId === null) return;
 
-    const markerId = drag.markerId;
+    const cornerId = drag.cornerId;
     const moved = drag.moved;
 
     dragRef.current = {
       pointerId: null,
-      markerId: null,
+      cornerId: null,
       moved: false,
     };
 
     if (!moved) {
-      setTurns((prev) =>
-        prev.map((turn) =>
-          turn.id === markerId ? { ...turn, color: selectedColour } : turn
+      setCorners((prev) =>
+        prev.map((corner) =>
+          corner.id === cornerId ? { ...corner, color: selectedColour } : corner
         )
       );
     }
   }
 
-  function saveTemplateToLocalStorage(templateId?: string) {
-    const id = templateId ?? `tpl_${Date.now()}`;
-
-    const template: LocalTemplate = {
-      id,
-      team,
-      trackName: trackName.trim(),
-      trackMapDataUrl,
-      turnCount: turns.length,
-      turns,
-      createdAt: new Date().toISOString(),
-    };
-
-    const existing = readTemplates();
-    const withoutCurrent = existing.filter((item) => item.id !== id);
-    const updated = [template, ...withoutCurrent];
-
-    writeTemplates(updated);
-    setSavedTemplates(updated);
-
-    return template;
+  function removeLastCorner() {
+    setCorners((prev) => prev.slice(0, -1));
   }
 
-  function handleSaveTemplateLocally() {
-    if (!canGenerate) {
-      setStatus("Please choose a team, enter a track name, select a map, and generate turns first.");
+  function resetCorners() {
+    setCorners([]);
+  }
+
+  function removeSpecificCorner(cornerId: number) {
+    setCorners((prev) =>
+      normaliseCorners(prev.filter((corner) => corner.id !== cornerId))
+    );
+  }
+
+  async function handleSaveTemplate() {
+    if (!team.trim()) {
+      setStatus("Please select a team.");
       return;
     }
 
-    const saved = saveTemplateToLocalStorage();
-    setStatus(`Template saved locally: ${saved.trackName} (${saved.team})`);
+    if (!trackName.trim()) {
+      setStatus("Please enter a track name.");
+      return;
+    }
+
+    if (!trackMapDataUrl.trim()) {
+      setStatus("Please select a track map.");
+      return;
+    }
+
+    if (corners.length === 0) {
+      setStatus("Please generate and position the turns first.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setStatus(selectedTemplateId ? "Updating template..." : "Saving template...");
+
+      const payload = {
+        team,
+        track_name: trackName.trim(),
+        track_map_url: trackMapDataUrl,
+        corner_count: corners.length,
+        corners: normaliseCorners(corners),
+      };
+
+      if (selectedTemplateId) {
+        const { error } = await supabase
+          .from("debrief_templates")
+          .update(payload)
+          .eq("id", selectedTemplateId);
+
+        if (error) {
+          setStatus(`Failed to update template: ${error.message}`);
+          return;
+        }
+
+        setGeneratedLink(`${origin}/driver/${selectedTemplateId}`);
+        setStatus("Template updated successfully.");
+      } else {
+        const { data, error } = await supabase
+          .from("debrief_templates")
+          .insert([payload])
+          .select("id")
+          .single();
+
+        if (error) {
+          setStatus(`Failed to save template: ${error.message}`);
+          return;
+        }
+
+        const newId = data.id as string;
+        setSelectedTemplateId(newId);
+        setGeneratedLink(`${origin}/driver/${newId}`);
+        setStatus("Template saved successfully.");
+      }
+
+      await loadTemplates();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setStatus(`Failed to save template: ${message}`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleGenerateDriverLink() {
-    if (!canGenerate) {
-      setStatus("Please complete the template first.");
+    if (!selectedTemplateId) {
+      setStatus("Save the template to Supabase first, then generate the driver link.");
       return;
     }
 
-    const saved = saveTemplateToLocalStorage();
-    const link = `${origin}/driver?localTemplateId=${saved.id}`;
+    const link = `${origin}/driver/${selectedTemplateId}`;
     setGeneratedLink(link);
     setStatus("Driver link generated.");
   }
@@ -270,21 +358,26 @@ export default function CreatorPage() {
     setStatus("Link copied to clipboard.");
   }
 
-  function handleLoadSavedTemplate(template: LocalTemplate) {
-    setTeam(template.team);
-    setTrackName(template.trackName);
-    setTrackMapDataUrl(template.trackMapDataUrl);
-    setTurnCount(String(template.turnCount));
-    setTurns(template.turns);
-    setGeneratedLink(`${origin}/driver?localTemplateId=${template.id}`);
-    setStatus(`Loaded local template: ${template.trackName}`);
-  }
+  async function handleDeleteTemplate(templateId: string) {
+    const confirmed = window.confirm("Delete this template?");
+    if (!confirmed) return;
 
-  function handleDeleteSavedTemplate(templateId: string) {
-    const updated = readTemplates().filter((item) => item.id !== templateId);
-    writeTemplates(updated);
-    setSavedTemplates(updated);
-    setStatus("Local template deleted.");
+    const { error } = await supabase
+      .from("debrief_templates")
+      .delete()
+      .eq("id", templateId);
+
+    if (error) {
+      setStatus(`Failed to delete template: ${error.message}`);
+      return;
+    }
+
+    if (selectedTemplateId === templateId) {
+      resetForm();
+    }
+
+    setStatus("Template deleted.");
+    await loadTemplates();
   }
 
   return (
@@ -298,8 +391,8 @@ export default function CreatorPage() {
             Debrief Template Creator
           </h1>
           <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
-            Create a local team-specific template, drag turns onto the map, colour-code
-            the markers, save locally, and generate a driver link.
+            Create a team template, position T1/T2/T3 markers on the map, colour-code them,
+            save to Supabase, and generate a shareable driver page link.
           </p>
         </section>
 
@@ -389,7 +482,7 @@ export default function CreatorPage() {
             <div>
               <h2 className="text-2xl font-semibold text-white">Track Map Preview</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Drag the turn numbers onto the corners. Tap a turn to apply the selected colour mode.
+                Drag T1, T2, T3... onto the corners. Tap a marker to set its current colour mode.
               </p>
             </div>
 
@@ -456,21 +549,21 @@ export default function CreatorPage() {
                       }}
                     />
 
-                    {turns.map((turn) => (
+                    {corners.map((corner) => (
                       <button
-                        key={turn.id}
+                        key={corner.id}
                         type="button"
-                        onPointerDown={(e) => handleMarkerPointerDown(e, turn.id)}
+                        onPointerDown={(e) => handleMarkerPointerDown(e, corner.id)}
                         className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1.5 text-sm font-semibold shadow-lg transition sm:text-base ${markerClass(
-                          turn.color
+                          corner.color
                         )}`}
                         style={{
-                          left: `${turn.x}%`,
-                          top: `${turn.y}%`,
+                          left: `${corner.x}%`,
+                          top: `${corner.y}%`,
                           touchAction: "none",
                         }}
                       >
-                        {turn.label}
+                        T{corner.id}
                       </button>
                     ))}
                   </>
@@ -482,16 +575,60 @@ export default function CreatorPage() {
               </div>
             </div>
           </div>
+
+          {corners.length > 0 && (
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={removeLastCorner}
+                className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+              >
+                Remove Last Turn
+              </button>
+
+              <button
+                type="button"
+                onClick={resetCorners}
+                className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+              >
+                Reset All Turns
+              </button>
+            </div>
+          )}
+
+          {corners.length > 0 && (
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {corners.map((corner) => (
+                <div
+                  key={corner.id}
+                  className="flex items-center justify-between rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3"
+                >
+                  <div className="text-sm text-white">
+                    T{corner.id} — x {corner.x.toFixed(1)} / y {corner.y.toFixed(1)}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeSpecificCorner(corner.id)}
+                    className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 transition hover:bg-red-500/20"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={handleSaveTemplateLocally}
-              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+              onClick={handleSaveTemplate}
+              disabled={saving}
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600] disabled:opacity-60"
             >
-              Save Template Locally
+              {saving ? "Saving..." : selectedTemplateId ? "Update Template" : "Save Template to Supabase"}
             </button>
 
             <button
@@ -511,6 +648,16 @@ export default function CreatorPage() {
                 Copy Link
               </button>
             )}
+
+            {selectedTemplateId && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+              >
+                New Template
+              </button>
+            )}
           </div>
 
           {generatedLink && (
@@ -527,65 +674,83 @@ export default function CreatorPage() {
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
-          <h2 className="text-2xl font-semibold text-white">Saved Local Templates</h2>
+          <h2 className="text-2xl font-semibold text-white">Saved Templates</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
-            These are stored in this browser only.
+            Load one to edit it, or open the live driver page.
           </p>
 
-          {savedTemplates.length === 0 ? (
-            <p className="mt-5 text-sm text-[#9CA3AF]">No local templates saved yet.</p>
+          {loadingTemplates ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">Loading templates...</p>
+          ) : templates.length === 0 ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">No templates saved yet.</p>
           ) : (
             <div className="mt-5 grid gap-4">
-              {savedTemplates.map((template) => (
-                <div
-                  key={template.id}
-                  className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4"
-                >
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap gap-2">
-                        <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
-                          {template.team}
-                        </span>
-                        <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
-                          {template.turnCount} turns
-                        </span>
+              {templates.map((template) => {
+                const driverUrl = `${origin}/driver/${template.id}`;
+
+                return (
+                  <div
+                    key={template.id}
+                    className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
+                            {template.team || "No team"}
+                          </span>
+                          <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
+                            {template.corner_count} turns
+                          </span>
+                        </div>
+
+                        <h3 className="text-xl font-semibold text-white">
+                          {template.track_name}
+                        </h3>
+
+                        <p className="break-all text-sm text-[#9CA3AF]">{driverUrl}</p>
                       </div>
-                      <h3 className="text-xl font-semibold text-white">
-                        {template.trackName}
-                      </h3>
-                    </div>
 
-                    <div className="flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleLoadSavedTemplate(template)}
-                        className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
-                      >
-                        Load
-                      </button>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={() => loadTemplateIntoForm(template)}
+                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                        >
+                          Edit
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setGeneratedLink(`${origin}/driver?localTemplateId=${template.id}`)
-                        }
-                        className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
-                      >
-                        Build Link
-                      </button>
+                        <Link
+                          href={`/driver/${template.id}`}
+                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                        >
+                          Open Driver Page
+                        </Link>
 
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSavedTemplate(template.id)}
-                        className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
-                      >
-                        Delete
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGeneratedLink(driverUrl);
+                            navigator.clipboard.writeText(driverUrl);
+                            setStatus("Link copied to clipboard.");
+                          }}
+                          className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+                        >
+                          Copy Link
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTemplate(template.id)}
+                          className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
