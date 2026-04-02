@@ -348,6 +348,8 @@ export default function DriverTemplatePage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          team: template.team,
+          templateId: template.id,
           driverName: driverName.trim(),
           sessionName: sessionName.trim(),
           trackName: template.track_name,

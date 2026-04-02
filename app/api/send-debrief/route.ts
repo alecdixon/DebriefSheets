@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
+import { supabase } from "@/lib/supabase";
 
 type TurnColor = "normal" | "blue" | "green" | "red";
 
@@ -699,6 +700,8 @@ export async function POST(request: Request) {
       overallComments,
       reliabilityFlags,
       cornerFeedback,
+      team,
+      templateID,
     }: {
       driverName: string;
       sessionName: string;
@@ -712,6 +715,8 @@ export async function POST(request: Request) {
       overallComments?: string;
       reliabilityFlags: Record<string, boolean>;
       cornerFeedback: CornerFeedback[];
+      team?: string;
+      templateID?: string;
     } = body;
 
     if (!driverName || !primaryRecipientEmail || !trackName) {
@@ -725,6 +730,27 @@ export async function POST(request: Request) {
     if (extraRecipientEmail && extraRecipientEmail !== primaryRecipientEmail) {
       recipients.push(extraRecipientEmail);
     }
+    const { error: saveError } = await supabase
+    .from("submitted_debriefs")
+   .insert({
+     team: team ?? null,
+      template_ID: templateID ?? null,
+      track_name: trackName,
+      session_name: sessionName ?? null,
+      driver_name: driverName,
+     primary_limitation: primaryLimitation ?? null,
+     overall_comments: overallComments ?? null,
+     reliability_flags: reliabilityFlags ?? {},
+     corner_feedback: cornerFeedback ?? [],
+     incident_markers: incidentMarkers ?? [],
+    });
+
+if (saveError) {
+  return Response.json(
+    { error: `Failed to save debrief: ${saveError.message}` },
+    { status: 500 }
+  );
+}
 
     const pdfBuffer = await buildDebriefPdf({
       driverName,
