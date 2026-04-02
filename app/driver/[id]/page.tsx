@@ -18,9 +18,13 @@ type Template = {
   corners: Corner[];
 };
 
+type BalancePhase = "entry" | "mid" | "exit";
+
 type CornerFeedback = {
   cornerId: number;
-  balanceValue: number;
+  entryBalanceValue: number;
+  midBalanceValue: number;
+  exitBalanceValue: number;
   comment: string;
 };
 
@@ -82,13 +86,62 @@ function hasMeaningfulBalance(value: number): boolean {
 }
 
 function balancePillClass(value: number): string {
-  if (value <= -2.25) return "bg-blue-700 text-white border-blue-500";
+  if (value <= -2.25) return "bg-blue-700/30 text-blue-100 border-blue-500";
   if (value <= -1.25) return "bg-blue-500/20 text-blue-200 border-blue-400/40";
   if (value <= -0.25) return "bg-cyan-500/20 text-cyan-200 border-cyan-400/40";
   if (value < 0.25) return "bg-green-500/20 text-green-200 border-green-400/40";
   if (value < 1.25) return "bg-yellow-500/20 text-yellow-200 border-yellow-400/40";
   if (value < 2.25) return "bg-orange-500/20 text-orange-200 border-orange-400/40";
   return "bg-red-500/20 text-red-200 border-red-400/40";
+}
+
+function phaseTitle(phase: BalancePhase): string {
+  if (phase === "entry") return "Entry";
+  if (phase === "mid") return "Mid";
+  return "Exit";
+}
+
+function BalanceSlider({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <label className="text-sm font-medium text-white">{label}</label>
+        <span
+          className={`rounded-full border px-3 py-1 text-xs font-semibold ${balancePillClass(
+            value
+          )}`}
+        >
+          {balanceValueToLabel(value)}
+        </span>
+      </div>
+
+      <div className="mb-3 h-4 w-full rounded-full bg-gradient-to-r from-blue-700 via-cyan-400 via-green-500 via-yellow-400 via-orange-500 to-red-600" />
+
+      <input
+        type="range"
+        min={-3}
+        max={3}
+        step={0.5}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-[#E10600]"
+      />
+
+      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] text-[#9CA3AF] sm:text-xs">
+        {balanceStops.map((stop) => (
+          <div key={`${label}-${stop.value}`}>{stop.label}</div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function DriverTemplatePage() {
@@ -154,7 +207,9 @@ export default function DriverTemplatePage() {
           setCornerFeedback(
             cleanTemplate.corners.map((corner: Corner) => ({
               cornerId: corner.id,
-              balanceValue: 0,
+              entryBalanceValue: 0,
+              midBalanceValue: 0,
+              exitBalanceValue: 0,
               comment: "",
             }))
           );
@@ -224,7 +279,11 @@ export default function DriverTemplatePage() {
 
   const completedCorners = useMemo(() => {
     return cornerFeedback.filter(
-      (entry) => hasMeaningfulBalance(entry.balanceValue) || entry.comment.trim() !== ""
+      (entry) =>
+        hasMeaningfulBalance(entry.entryBalanceValue) ||
+        hasMeaningfulBalance(entry.midBalanceValue) ||
+        hasMeaningfulBalance(entry.exitBalanceValue) ||
+        entry.comment.trim() !== ""
     ).length;
   }, [cornerFeedback]);
 
@@ -304,7 +363,12 @@ export default function DriverTemplatePage() {
           reliabilityFlags,
           cornerFeedback: cornerFeedback.map((entry) => ({
             cornerId: entry.cornerId,
-            balance: balanceValueToLabel(entry.balanceValue),
+            entryBalance: balanceValueToLabel(entry.entryBalanceValue),
+            midBalance: balanceValueToLabel(entry.midBalanceValue),
+            exitBalance: balanceValueToLabel(entry.exitBalanceValue),
+            entryBalanceValue: entry.entryBalanceValue,
+            midBalanceValue: entry.midBalanceValue,
+            exitBalanceValue: entry.exitBalanceValue,
             comment: entry.comment,
           })),
           incidentMarkers,
@@ -532,22 +596,13 @@ export default function DriverTemplatePage() {
             <div>
               <h2 className="text-2xl font-semibold text-white">Selected Corner</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Enter the balance and any comments for the selected corner.
+                Enter Entry, Mid and Exit balance, plus any comments.
               </p>
             </div>
 
-            {selectedCorner && selectedCornerEntry && (
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-4 py-2 text-sm text-white">
-                  Corner T{selectedCorner.id}
-                </div>
-                <div
-                  className={`rounded-full border px-4 py-2 text-sm font-semibold ${balancePillClass(
-                    selectedCornerEntry.balanceValue
-                  )}`}
-                >
-                  {balanceValueToLabel(selectedCornerEntry.balanceValue)}
-                </div>
+            {selectedCorner && (
+              <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-4 py-2 text-sm text-white">
+                Corner T{selectedCorner.id}
               </div>
             )}
           </div>
@@ -556,45 +611,36 @@ export default function DriverTemplatePage() {
             <p className="mt-5 text-sm text-[#9CA3AF]">Select a corner on the map above.</p>
           ) : (
             <div className="mt-5 space-y-5">
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white">
-                  Balance
-                </label>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <BalanceSlider
+                  label={phaseTitle("entry")}
+                  value={selectedCornerEntry.entryBalanceValue}
+                  onChange={(value) =>
+                    updateCornerFeedback(selectedCorner.id, {
+                      entryBalanceValue: value,
+                    })
+                  }
+                />
 
-                <div className="rounded-3xl border border-[#2A3441] bg-[#111827] p-4">
-                  <div className="mb-3 h-4 w-full rounded-full bg-gradient-to-r from-blue-700 via-cyan-400 via-green-500 via-yellow-400 via-orange-500 to-red-600" />
+                <BalanceSlider
+                  label={phaseTitle("mid")}
+                  value={selectedCornerEntry.midBalanceValue}
+                  onChange={(value) =>
+                    updateCornerFeedback(selectedCorner.id, {
+                      midBalanceValue: value,
+                    })
+                  }
+                />
 
-                  <input
-                    type="range"
-                    min={-3}
-                    max={3}
-                    step={0.5}
-                    value={selectedCornerEntry.balanceValue}
-                    onChange={(e) =>
-                      updateCornerFeedback(selectedCorner.id, {
-                        balanceValue: Number(e.target.value),
-                      })
-                    }
-                    className="w-full accent-[#E10600]"
-                  />
-
-                  <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] text-[#9CA3AF] sm:text-xs">
-                    {balanceStops.map((stop) => (
-                      <div key={stop.value}>{stop.label}</div>
-                    ))}
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <span className="text-sm text-[#9CA3AF]">Selected:</span>
-                    <span
-                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${balancePillClass(
-                        selectedCornerEntry.balanceValue
-                      )}`}
-                    >
-                      {balanceValueToLabel(selectedCornerEntry.balanceValue)}
-                    </span>
-                  </div>
-                </div>
+                <BalanceSlider
+                  label={phaseTitle("exit")}
+                  value={selectedCornerEntry.exitBalanceValue}
+                  onChange={(value) =>
+                    updateCornerFeedback(selectedCorner.id, {
+                      exitBalanceValue: value,
+                    })
+                  }
+                />
               </div>
 
               <div>

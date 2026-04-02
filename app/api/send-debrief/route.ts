@@ -1,8 +1,6 @@
 import { Resend } from "resend";
 import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 type Corner = {
   id: number;
   x: number;
@@ -11,7 +9,12 @@ type Corner = {
 
 type CornerFeedback = {
   cornerId: number;
-  balance: string;
+  entryBalance: string;
+  midBalance: string;
+  exitBalance: string;
+  entryBalanceValue?: number;
+  midBalanceValue?: number;
+  exitBalanceValue?: number;
   comment: string;
 };
 
@@ -20,34 +23,6 @@ type IncidentMarker = {
   x: number;
   y: number;
   note: string;
-};
-
-type BuildDebriefPdfPayload = {
-  driverName: string;
-  sessionName: string;
-  trackName: string;
-  trackMapUrl?: string | null;
-  corners: Corner[];
-  incidentMarkers: IncidentMarker[];
-  primaryLimitation?: string;
-  overallComments?: string;
-  reliabilityFlags: Record<string, boolean>;
-  cornerFeedback: CornerFeedback[];
-};
-
-type PostBody = {
-  driverName: string;
-  sessionName: string;
-  trackName: string;
-  trackMapUrl?: string | null;
-  corners?: Corner[];
-  incidentMarkers?: IncidentMarker[];
-  primaryRecipientEmail: string;
-  extraRecipientEmail?: string;
-  primaryLimitation?: string;
-  overallComments?: string;
-  reliabilityFlags?: Record<string, boolean>;
-  cornerFeedback?: CornerFeedback[];
 };
 
 function wrapText(text: string, maxCharsPerLine: number): string[] {
@@ -71,7 +46,32 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   return lines;
 }
 
-async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer> {
+function getBalanceColor(value?: number) {
+  if (value === undefined || value === null) {
+    return rgb(0.2, 0.6, 0.2);
+  }
+
+  if (value <= -2.25) return rgb(0.12, 0.34, 0.78);
+  if (value <= -1.25) return rgb(0.18, 0.52, 0.88);
+  if (value <= -0.25) return rgb(0.14, 0.72, 0.84);
+  if (value < 0.25) return rgb(0.18, 0.68, 0.35);
+  if (value < 1.25) return rgb(0.86, 0.71, 0.14);
+  if (value < 2.25) return rgb(0.91, 0.48, 0.15);
+  return rgb(0.82, 0.19, 0.18);
+}
+
+async function buildDebriefPdf(payload: {
+  driverName: string;
+  sessionName: string;
+  trackName: string;
+  trackMapUrl?: string | null;
+  corners: Corner[];
+  incidentMarkers: IncidentMarker[];
+  primaryLimitation?: string;
+  overallComments?: string;
+  reliabilityFlags: Record<string, boolean>;
+  cornerFeedback: CornerFeedback[];
+}) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -111,7 +111,7 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
     width: number,
     height: number,
     title: string
-  ): void {
+  ) {
     page.drawRectangle({
       x,
       y,
@@ -131,6 +131,37 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
     });
   }
 
+  function drawBalanceChip(
+    page: PDFPage,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    value?: number
+  ) {
+    const fill = getBalanceColor(value);
+
+    page.drawRectangle({
+      x,
+      y,
+      width,
+      height,
+      color: fill,
+      borderColor: colors.border,
+      borderWidth: 0.8,
+    });
+
+    const textWidth = bold.widthOfTextAtSize(label, 8.5);
+    page.drawText(label, {
+      x: x + (width - textWidth) / 2,
+      y: y + height / 2 - 3.5,
+      size: 8.5,
+      font: bold,
+      color: colors.text,
+    });
+  }
+
   async function drawTrackMapPanel(
     page: PDFPage,
     x: number,
@@ -140,7 +171,7 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
     imageUrl?: string | null,
     corners: Corner[] = [],
     incidentMarkers: IncidentMarker[] = []
-  ): Promise<void> {
+  ) {
     drawPanel(page, x, y, width, height, "Track Map");
 
     if (!imageUrl) {
@@ -156,10 +187,6 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
 
     try {
       const response = await fetch(imageUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch track map: ${response.status}`);
-      }
-
       const imageBytes = await response.arrayBuffer();
       const contentType = response.headers.get("content-type") || "";
 
@@ -194,12 +221,11 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
       for (const corner of corners) {
         const markerX = drawX + (corner.x / 100) * drawW;
         const markerY = drawY + drawH - (corner.y / 100) * drawH;
-        const radius = 12;
 
         page.drawCircle({
           x: markerX,
           y: markerY,
-          size: radius,
+          size: 12,
           color: colors.accent,
           borderColor: colors.text,
           borderWidth: 1.5,
@@ -409,7 +435,7 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
 
   cursorY -= 28;
 
-  function drawTableHeader(page: PDFPage, y: number): void {
+  function drawTableHeader(page: PDFPage, y: number) {
     page.drawRectangle({
       x: margin,
       y: y - 16,
@@ -423,23 +449,39 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
     page.drawText("Corner", {
       x: margin + 10,
       y: y - 8,
-      size: 11,
+      size: 10,
       font: bold,
       color: colors.muted,
     });
 
-    page.drawText("Balance", {
-      x: margin + 90,
+    page.drawText("Entry", {
+      x: margin + 75,
       y: y - 8,
-      size: 11,
+      size: 10,
+      font: bold,
+      color: colors.muted,
+    });
+
+    page.drawText("Mid", {
+      x: margin + 145,
+      y: y - 8,
+      size: 10,
+      font: bold,
+      color: colors.muted,
+    });
+
+    page.drawText("Exit", {
+      x: margin + 215,
+      y: y - 8,
+      size: 10,
       font: bold,
       color: colors.muted,
     });
 
     page.drawText("Comment", {
-      x: margin + 180,
+      x: margin + 290,
       y: y - 8,
-      size: 11,
+      size: 10,
       font: bold,
       color: colors.muted,
     });
@@ -449,8 +491,8 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
   cursorY -= 30;
 
   for (const row of sortedRows) {
-    const commentLines = wrapText(row.comment || "-", 80);
-    const rowHeight = Math.max(24, commentLines.length * 14 + 10);
+    const commentLines = wrapText(row.comment || "-", 55);
+    const rowHeight = Math.max(28, commentLines.length * 14 + 12);
 
     if (cursorY - rowHeight < 30) {
       currentPage = addPage();
@@ -487,17 +529,14 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
       color: colors.text,
     });
 
-    currentPage.drawText(row.balance || "-", {
-      x: margin + 90,
-      y: cursorY - 10,
-      size: 10,
-      font,
-      color: colors.text,
-    });
+    const chipY = cursorY - 17;
+    drawBalanceChip(currentPage, margin + 66, chipY, 52, 18, row.entryBalance || "-", row.entryBalanceValue);
+    drawBalanceChip(currentPage, margin + 136, chipY, 52, 18, row.midBalance || "-", row.midBalanceValue);
+    drawBalanceChip(currentPage, margin + 206, chipY, 52, 18, row.exitBalance || "-", row.exitBalanceValue);
 
     commentLines.forEach((line, i) => {
       currentPage.drawText(line, {
-        x: margin + 180,
+        x: margin + 290,
         y: cursorY - 10 - i * 14,
         size: 10,
         font,
@@ -581,9 +620,19 @@ async function buildDebriefPdf(payload: BuildDebriefPdfPayload): Promise<Buffer>
   return Buffer.from(bytes);
 }
 
-export async function POST(request: Request): Promise<Response> {
+export async function POST(request: Request) {
   try {
-    const body: PostBody = await request.json();
+    const apiKey = process.env.RESEND_API_KEY;
+
+    if (!apiKey) {
+      return Response.json(
+        { error: "RESEND_API_KEY is not configured." },
+        { status: 500 }
+      );
+    }
+
+    const resend = new Resend(apiKey);
+    const body = await request.json();
 
     const {
       driverName,
@@ -598,6 +647,19 @@ export async function POST(request: Request): Promise<Response> {
       overallComments,
       reliabilityFlags,
       cornerFeedback,
+    }: {
+      driverName: string;
+      sessionName: string;
+      trackName: string;
+      trackMapUrl?: string | null;
+      corners?: Corner[];
+      incidentMarkers?: IncidentMarker[];
+      primaryRecipientEmail: string;
+      extraRecipientEmail?: string;
+      primaryLimitation?: string;
+      overallComments?: string;
+      reliabilityFlags: Record<string, boolean>;
+      cornerFeedback: CornerFeedback[];
     } = body;
 
     if (!driverName || !primaryRecipientEmail || !trackName) {
@@ -607,19 +669,8 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
-    if (!process.env.RESEND_API_KEY) {
-      return Response.json(
-        { error: "Missing RESEND_API_KEY environment variable." },
-        { status: 500 }
-      );
-    }
-
     const recipients = [primaryRecipientEmail];
-    if (
-      extraRecipientEmail &&
-      extraRecipientEmail.trim() &&
-      extraRecipientEmail !== primaryRecipientEmail
-    ) {
+    if (extraRecipientEmail && extraRecipientEmail !== primaryRecipientEmail) {
       recipients.push(extraRecipientEmail);
     }
 
@@ -669,7 +720,8 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     return Response.json(
       {
-        error: error instanceof Error ? error.message : "Unknown server error",
+        error:
+          error instanceof Error ? error.message : "Unknown server error",
       },
       { status: 500 }
     );
