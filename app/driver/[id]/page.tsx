@@ -13,12 +13,11 @@ type Corner = {
 type Template = {
   id: string;
   track_name: string;
+  team: string;
   corner_count: number;
   track_map_url: string | null;
   corners: Corner[];
 };
-
-type BalancePhase = "entry" | "mid" | "exit";
 
 type CornerFeedback = {
   cornerId: number;
@@ -33,6 +32,7 @@ type Recipient = {
   name: string;
   email: string;
   active: boolean;
+  team: string;
 };
 
 type IncidentMarker = {
@@ -93,12 +93,6 @@ function balancePillClass(value: number): string {
   if (value < 1.25) return "bg-yellow-500/20 text-yellow-200 border-yellow-400/40";
   if (value < 2.25) return "bg-orange-500/20 text-orange-200 border-orange-400/40";
   return "bg-red-500/20 text-red-200 border-red-400/40";
-}
-
-function phaseTitle(phase: BalancePhase): string {
-  if (phase === "entry") return "Entry";
-  if (phase === "mid") return "Mid";
-  return "Exit";
 }
 
 function BalanceSlider({
@@ -182,38 +176,41 @@ export default function DriverTemplatePage() {
       }
 
       try {
-        const [
-          { data: templateData, error: templateError },
-          { data: recipientData, error: recipientError },
-        ] = await Promise.all([
-          supabase
-            .from("debrief_templates")
-            .select("*")
-            .eq("id", templateId)
-            .single(),
-          supabase
-            .from("engineers")
-            .select("id, name, email, active")
-            .eq("active", true)
-            .order("name", { ascending: true }),
-        ]);
+        const { data: templateData, error: templateError } = await supabase
+          .from("debrief_templates")
+          .select("*")
+          .eq("id", templateId)
+          .single();
 
         if (templateError) {
           setLoadError(`Could not load template: ${templateError.message}`);
-        } else if (templateData) {
-          const cleanTemplate = templateData as Template;
-          setTemplate(cleanTemplate);
-          setSelectedCornerId(cleanTemplate.corners?.[0]?.id ?? null);
-          setCornerFeedback(
-            cleanTemplate.corners.map((corner: Corner) => ({
-              cornerId: corner.id,
-              entryBalanceValue: 0,
-              midBalanceValue: 0,
-              exitBalanceValue: 0,
-              comment: "",
-            }))
-          );
+          return;
         }
+
+        if (!templateData) {
+          setLoadError("Template not found.");
+          return;
+        }
+
+        const cleanTemplate = templateData as Template;
+        setTemplate(cleanTemplate);
+        setSelectedCornerId(cleanTemplate.corners?.[0]?.id ?? null);
+        setCornerFeedback(
+          cleanTemplate.corners.map((corner: Corner) => ({
+            cornerId: corner.id,
+            entryBalanceValue: 0,
+            midBalanceValue: 0,
+            exitBalanceValue: 0,
+            comment: "",
+          }))
+        );
+
+        const { data: recipientData, error: recipientError } = await supabase
+          .from("engineers")
+          .select("id, name, email, active, team")
+          .eq("active", true)
+          .eq("team", cleanTemplate.team)
+          .order("name", { ascending: true });
 
         if (recipientError) {
           setLoadError((prev) =>
@@ -419,7 +416,7 @@ export default function DriverTemplatePage() {
             Driver Debrief
           </h1>
           <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
-            {template.track_name}
+            {template.track_name} · {template.team}
           </p>
           {loadError && <p className="mt-3 text-sm text-red-300">{loadError}</p>}
         </section>
@@ -613,7 +610,7 @@ export default function DriverTemplatePage() {
             <div className="mt-5 space-y-5">
               <div className="grid gap-4 lg:grid-cols-3">
                 <BalanceSlider
-                  label={phaseTitle("entry")}
+                  label="Entry"
                   value={selectedCornerEntry.entryBalanceValue}
                   onChange={(value) =>
                     updateCornerFeedback(selectedCorner.id, {
@@ -623,7 +620,7 @@ export default function DriverTemplatePage() {
                 />
 
                 <BalanceSlider
-                  label={phaseTitle("mid")}
+                  label="Mid"
                   value={selectedCornerEntry.midBalanceValue}
                   onChange={(value) =>
                     updateCornerFeedback(selectedCorner.id, {
@@ -633,7 +630,7 @@ export default function DriverTemplatePage() {
                 />
 
                 <BalanceSlider
-                  label={phaseTitle("exit")}
+                  label="Exit"
                   value={selectedCornerEntry.exitBalanceValue}
                   onChange={(value) =>
                     updateCornerFeedback(selectedCorner.id, {
