@@ -1,6 +1,44 @@
 import { Resend } from "resend";
 import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
+import { NextResponse } from "next/server";
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+
+  if (typeof error === "string") return error;
+
+  if (typeof error === "object" && error !== null) {
+    if ("message" in error && typeof (error as { message?: unknown }).message === "string") {
+      return (error as { message: string }).message;
+    }
+
+    try {
+      return JSON.stringify(error, null, 2);
+    } catch {
+      return "Unknown object error";
+    }
+  }
+
+  return String(error);
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("send-debrief crashed:", error);
+
+    return NextResponse.json(
+      {
+        error: getErrorMessage(error),
+      },
+      { status: 500 }
+    );
+  }
+}
 
 type TurnColor = "normal" | "blue" | "green" | "red";
 
