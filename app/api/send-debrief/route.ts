@@ -679,10 +679,7 @@ async function buildDebriefPdf(payload: {
 
     for (let i = 0; i < payload.incidentMarkers.length; i++) {
       const marker = payload.incidentMarkers[i];
-      const lines = wrapText(
-        marker.note?.trim() ? marker.note.trim() : "No note",
-        95
-      );
+      const lines = wrapText(marker.note?.trim() ? marker.note.trim() : "No note", 95);
       const blockHeight = Math.max(34, lines.length * 14 + 16);
 
       if (incidentY - blockHeight < 30) {
@@ -774,18 +771,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const intendedRecipients = [primaryRecipientEmail];
+    const intendedRecipients = [
+      primaryRecipientEmail?.trim(),
+      extraRecipientEmail?.trim(),
+    ].filter((value, index, array): value is string => {
+      return Boolean(value) && array.indexOf(value) === index;
+    });
 
-    if (
-      extraRecipientEmail &&
-      extraRecipientEmail !== primaryRecipientEmail
-    ) {
-      intendedRecipients.push(extraRecipientEmail);
-    }
-
-    // Temporary sandbox workaround: always send to Alec
-    const recipients = ["alec.dixon@rodinmotorsport.com"];
-    const forwardTag = intendedRecipients.join(",");
+    const actualRecipient = "alec.dixon@rodinmotorsport.com";
+    const recipientLabel = intendedRecipients.join(" | ");
 
     const { error: saveError } = await supabase
       .from("submitted_debriefs")
@@ -800,6 +794,7 @@ export async function POST(request: Request) {
         reliability_flags: reliabilityFlags ?? {},
         corner_feedback: cornerFeedback ?? [],
         incident_markers: incidentMarkers ?? [],
+        intended_recipients: intendedRecipients, // only keep this if your DB has the column
       });
 
     if (saveError) {
@@ -826,13 +821,12 @@ export async function POST(request: Request) {
 
     const { data, error } = await resend.emails.send({
       from: "Debrief App <onboarding@resend.dev>",
-      to: recipients,
-      subject: `[FORWARD_TO=${forwardTag}] [TEAM=${team ?? "UNKNOWN"}] ${trackName} debrief - ${driverName}`,
+      to: [actualRecipient],
+      subject: `[FORWARD_TO=${recipientLabel}] [TEAM=${team ?? "UNKNOWN"}] ${trackName} debrief - ${driverName}`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.5;">
           <h2>Driver Debrief Submitted</h2>
-          <p><strong>Temporary routing:</strong> this email was sent to Alec for forwarding.</p>
-          <p><strong>Intended recipient(s):</strong> ${intendedRecipients.join(", ")}</p>
+          <p><strong>Selected recipient(s):</strong> ${recipientLabel || "None provided"}</p>
           <p><strong>Team:</strong> ${team ?? "Not provided"}</p>
           <p><strong>Track:</strong> ${trackName}</p>
           <p><strong>Driver:</strong> ${driverName}</p>
@@ -860,7 +854,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       data,
-      routedTo: recipients,
+      sentTo: actualRecipient,
       intendedRecipients,
     });
   } catch (error) {
