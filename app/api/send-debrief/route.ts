@@ -794,7 +794,6 @@ export async function POST(request: Request) {
         reliability_flags: reliabilityFlags ?? {},
         corner_feedback: cornerFeedback ?? [],
         incident_markers: incidentMarkers ?? [],
-        intended_recipients: intendedRecipients, // only keep this if your DB has the column
       });
 
     if (saveError) {
