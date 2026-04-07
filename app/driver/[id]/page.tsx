@@ -375,106 +375,108 @@ export default function DriverTemplatePage() {
   }
 
   async function handleSendPdf() {
-    if (!template) {
-      setSendStatus("No template loaded.");
-      return;
-    }
+  if (!template) {
+    setSendStatus("No template loaded.");
+    return;
+  }
 
-    if (!driverName.trim()) {
-      setSendStatus("Please enter the driver name.");
-      return;
-    }
+  if (!driverName.trim()) {
+    setSendStatus("Please enter the driver name.");
+    return;
+  }
 
-    if (!sessionName.trim()) {
-      setSendStatus("Please enter the session.");
-      return;
-    }
+  if (!sessionName.trim()) {
+    setSendStatus("Please enter the session.");
+    return;
+  }
 
-    if (!primaryRecipient) {
-      setSendStatus("Please select a primary recipient.");
-      return;
-    }
+  if (!primaryRecipient) {
+    setSendStatus("Please select a primary recipient.");
+    return;
+  }
 
-    if (recipientErrorMessage) {
-      setSendStatus(recipientErrorMessage);
-      return;
-    }
+  if (recipientErrorMessage) {
+    setSendStatus(recipientErrorMessage);
+    return;
+  }
 
+  try {
+    setSending(true);
+    setSendStatus("Sending email...");
+
+    const payload = {
+      team: template.team,
+      templateId: template.id,
+      driverName: driverName.trim(),
+      sessionName: sessionName.trim(),
+      trackName: template.track_name,
+      trackMapUrl: template.track_map_url,
+      corners: template.corners,
+      primaryRecipientEmail: primaryRecipient.email,
+      extraRecipientEmail: extraRecipient?.email ?? null,
+      primaryLimitation: primaryLimitation.trim(),
+      overallComments: overallComments.trim(),
+      reliabilityFlags,
+      cornerFeedback: cornerFeedback.map((entry) => ({
+        cornerId: entry.cornerId,
+        entryBalance: balanceValueToLabel(entry.entryBalanceValue),
+        midBalance: balanceValueToLabel(entry.midBalanceValue),
+        exitBalance: balanceValueToLabel(entry.exitBalanceValue),
+        entryBalanceValue: entry.entryBalanceValue,
+        midBalanceValue: entry.midBalanceValue,
+        exitBalanceValue: entry.exitBalanceValue,
+        comment: entry.comment.trim(),
+      })),
+      incidentMarkers,
+    };
+
+    const response = await fetch("/api/send-debrief", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+
+    let parsed: unknown = text;
     try {
-      setSending(true);
-      setSendStatus("Sending email...");
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
 
-      const payload = {
-        team: template.team,
-        templateId: template.id,
-        driverName: driverName.trim(),
-        sessionName: sessionName.trim(),
-        trackName: template.track_name,
-        trackMapUrl: template.track_map_url,
-        corners: template.corners,
-        primaryRecipientEmail: primaryRecipient.email,
-        extraRecipientEmail: extraRecipient?.email ?? null,
-        primaryLimitation: primaryLimitation.trim(),
-        overallComments: overallComments.trim(),
-        reliabilityFlags,
-        cornerFeedback: cornerFeedback.map((entry) => ({
-          cornerId: entry.cornerId,
-          entryBalance: balanceValueToLabel(entry.entryBalanceValue),
-          midBalance: balanceValueToLabel(entry.midBalanceValue),
-          exitBalance: balanceValueToLabel(entry.exitBalanceValue),
-          entryBalanceValue: entry.entryBalanceValue,
-          midBalanceValue: entry.midBalanceValue,
-          exitBalanceValue: entry.exitBalanceValue,
-          comment: entry.comment.trim(),
-        })),
-        incidentMarkers,
-      };
+    if (!response.ok) {
+      let message = `Server returned ${response.status}`;
 
-      console.log("SEND PAYLOAD:", payload);
+      if (typeof parsed === "string" && parsed.trim()) {
+        message = parsed;
+      } else if (parsed && typeof parsed === "object") {
+        const obj = parsed as Record<string, unknown>;
 
-      const response = await fetch("/api/send-debrief", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const contentType = response.headers.get("content-type") || "";
-      let result: any = null;
-      let rawText = "";
-
-      if (contentType.includes("application/json")) {
-        result = await response.json();
-      } else {
-        rawText = await response.text();
-        try {
-          result = rawText ? JSON.parse(rawText) : null;
-        } catch {
-          result = { error: rawText };
+        if (typeof obj.error === "string") {
+          message = obj.error;
+        } else if (typeof obj.message === "string") {
+          message = obj.message;
+        } else {
+          message = JSON.stringify(obj, null, 2);
         }
       }
 
-      console.log("SEND RESPONSE STATUS:", response.status);
-      console.log("SEND RESPONSE BODY:", result);
-
-      if (!response.ok) {
-        const errorMessage = normaliseApiError(
-          result?.error ?? result?.message ?? rawText ?? `Server returned ${response.status}`
-        );
-
-        setSendStatus(`Send failed (${response.status}): ${errorMessage}`);
-        return;
-      }
-
-      setSendStatus("Email sent successfully.");
-    } catch (error) {
-      console.error("SEND ERROR:", error);
-      setSendStatus(`Send failed: ${getErrorMessage(error)}`);
-    } finally {
-      setSending(false);
+      setSendStatus(`Send failed (${response.status}): ${message}`);
+      return;
     }
+
+    setSendStatus("Email sent successfully.");
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : JSON.stringify(error, null, 2);
+    setSendStatus(`Send failed: ${message}`);
+  } finally {
+    setSending(false);
   }
+}
 
   if (loading) {
     return (

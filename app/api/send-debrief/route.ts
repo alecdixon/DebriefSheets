@@ -3,43 +3,6 @@ import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import { NextResponse } from "next/server";
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-
-  if (typeof error === "string") return error;
-
-  if (typeof error === "object" && error !== null) {
-    if ("message" in error && typeof (error as { message?: unknown }).message === "string") {
-      return (error as { message: string }).message;
-    }
-
-    try {
-      return JSON.stringify(error, null, 2);
-    } catch {
-      return "Unknown object error";
-    }
-  }
-
-  return String(error);
-}
-
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    console.error("send-debrief crashed:", error);
-
-    return NextResponse.json(
-      {
-        error: getErrorMessage(error),
-      },
-      { status: 500 }
-    );
-  }
-}
-
 type TurnColor = "normal" | "blue" | "green" | "red";
 
 type Corner = {
@@ -66,6 +29,42 @@ type IncidentMarker = {
   y: number;
   note: string;
 };
+
+type RequestBody = {
+  driverName: string;
+  sessionName: string;
+  trackName: string;
+  trackMapUrl?: string | null;
+  corners?: Corner[];
+  incidentMarkers?: IncidentMarker[];
+  primaryRecipientEmail: string;
+  extraRecipientEmail?: string | null;
+  primaryLimitation?: string;
+  overallComments?: string;
+  reliabilityFlags: Record<string, boolean>;
+  cornerFeedback: CornerFeedback[];
+  team?: string;
+  templateId?: string;
+};
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+
+  if (typeof error === "object" && error !== null) {
+    if ("message" in error && typeof (error as { message?: unknown }).message === "string") {
+      return (error as { message: string }).message;
+    }
+
+    try {
+      return JSON.stringify(error, null, 2);
+    } catch {
+      return "Unknown object error";
+    }
+  }
+
+  return String(error);
+}
 
 function wrapText(text: string, maxCharsPerLine: number): string[] {
   if (!text?.trim()) return ["-"];
@@ -273,6 +272,8 @@ async function buildDebriefPdf(payload: {
 
     try {
       const response = await fetch(imageUrl);
+      if (!response.ok) throw new Error(`Track map fetch failed: ${response.status}`);
+
       const imageBytes = await response.arrayBuffer();
       const contentType = response.headers.get("content-type") || "";
 
@@ -716,14 +717,14 @@ export async function POST(request: Request) {
     const apiKey = process.env.RESEND_API_KEY;
 
     if (!apiKey) {
-      return Response.json(
+      return NextResponse.json(
         { error: "RESEND_API_KEY is not configured." },
         { status: 500 }
       );
     }
 
     const resend = new Resend(apiKey);
-    const body = await request.json();
+    const body = (await request.json()) as RequestBody;
 
     const {
       driverName,
@@ -740,25 +741,10 @@ export async function POST(request: Request) {
       cornerFeedback,
       team,
       templateId,
-    }: {
-      driverName: string;
-      sessionName: string;
-      trackName: string;
-      trackMapUrl?: string | null;
-      corners?: Corner[];
-      incidentMarkers?: IncidentMarker[];
-      primaryRecipientEmail: string;
-      extraRecipientEmail?: string;
-      primaryLimitation?: string;
-      overallComments?: string;
-      reliabilityFlags: Record<string, boolean>;
-      cornerFeedback: CornerFeedback[];
-      team?: string;
-      templateId?: string;
     } = body;
 
     if (!driverName || !primaryRecipientEmail || !trackName) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Missing required fields." },
         { status: 400 }
       );
@@ -768,27 +754,26 @@ export async function POST(request: Request) {
     if (extraRecipientEmail && extraRecipientEmail !== primaryRecipientEmail) {
       recipients.push(extraRecipientEmail);
     }
-    const { error: saveError } = await supabase
-    .from("submitted_debriefs")
-   .insert({
-     team: team ?? null,
+
+    const { error: saveError } = await supabase.from("submitted_debriefs").insert({
+      team: team ?? null,
       template_id: templateId ?? null,
       track_name: trackName,
       session_name: sessionName ?? null,
       driver_name: driverName,
-     primary_limitation: primaryLimitation ?? null,
-     overall_comments: overallComments ?? null,
-     reliability_flags: reliabilityFlags ?? {},
-     corner_feedback: cornerFeedback ?? [],
-     incident_markers: incidentMarkers ?? [],
+      primary_limitation: primaryLimitation ?? null,
+      overall_comments: overallComments ?? null,
+      reliability_flags: reliabilityFlags ?? {},
+      corner_feedback: cornerFeedback ?? [],
+      incident_markers: incidentMarkers ?? [],
     });
 
-if (saveError) {
-  return Response.json(
-    { error: `Failed to save debrief: ${saveError.message}` },
-    { status: 500 }
-  );
-}
+    if (saveError) {
+      return NextResponse.json(
+        { error: `Failed to save debrief: ${saveError.message}` },
+        { status: 500 }
+      );
+    }
 
     const pdfBuffer = await buildDebriefPdf({
       driverName,
@@ -829,15 +814,19 @@ if (saveError) {
     });
 
     if (error) {
-      return Response.json({ error }, { status: 500 });
+      return NextResponse.json(
+        { error: `Failed to send email: ${getErrorMessage(error)}` },
+        { status: 500 }
+      );
     }
 
-    return Response.json({ success: true, data });
+    return NextResponse.json({ success: true, data });
   } catch (error) {
-    return Response.json(
+    console.error("send-debrief route failed:", error);
+
+    return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Unknown server error",
+        error: getErrorMessage(error),
       },
       { status: 500 }
     );
