@@ -5,20 +5,20 @@ import { supabase } from "@/lib/supabase";
 
 type SubmittedCornerFeedback = {
   cornerId: number;
-  entryBalanceValue?: number;
-  midBalanceValue?: number;
-  exitBalanceValue?: number;
-  comment?: string;
+  entryBalanceValue?: number | null;
+  midBalanceValue?: number | null;
+  exitBalanceValue?: number | null;
+  comment?: string | null;
 };
 
 type SubmittedDebrief = {
   id: string;
   team: string | null;
-  driver_name: string;
+  driver_name: string | null;
   session_name: string | null;
-  track_name: string;
-  created_at?: string;
-  corner_feedback: SubmittedCornerFeedback[];
+  track_name: string | null;
+  created_at?: string | null;
+  corner_feedback: SubmittedCornerFeedback[] | null;
 };
 
 type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
@@ -32,6 +32,8 @@ const lineColours = [
   "#06b6d4",
   "#e11d48",
   "#84cc16",
+  "#14b8a6",
+  "#f97316",
 ];
 
 const phaseRows: { key: PhaseKey; label: string }[] = [
@@ -60,10 +62,15 @@ function xForBalance(value: number, left: number, width: number) {
   return left + normalised * width;
 }
 
-function formatDate(dateString?: string) {
-  if (!dateString) return "";
+function safeText(value: string | null | undefined, fallback = "-") {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed || fallback;
+}
+
+function formatDate(dateString?: string | null) {
+  if (!dateString) return "-";
   const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return "";
+  if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleString();
 }
 
@@ -73,9 +80,11 @@ export default function SummaryPage() {
   const [selectedTeam, setSelectedTeam] = useState("");
   const [selectedDebriefIds, setSelectedDebriefIds] = useState<string[]>([]);
   const [clearing, setClearing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   async function loadDebriefs() {
     setLoading(true);
+    setErrorMessage("");
 
     const { data, error } = await supabase
       .from("submitted_debriefs")
@@ -87,10 +96,21 @@ export default function SummaryPage() {
     if (error) {
       console.error("Error loading debriefs:", error);
       setAllDebriefs([]);
-    } else {
-      setAllDebriefs((data ?? []) as SubmittedDebrief[]);
+      setErrorMessage(error.message || "Failed to load submitted debriefs.");
+      setLoading(false);
+      return;
     }
 
+    const cleaned = ((data ?? []) as SubmittedDebrief[]).map((row) => ({
+      ...row,
+      team: row.team ?? "",
+      driver_name: row.driver_name ?? "",
+      session_name: row.session_name ?? "",
+      track_name: row.track_name ?? "",
+      corner_feedback: Array.isArray(row.corner_feedback) ? row.corner_feedback : [],
+    }));
+
+    setAllDebriefs(cleaned);
     setLoading(false);
   }
 
@@ -99,28 +119,31 @@ export default function SummaryPage() {
   }, []);
 
   const availableTeams = useMemo(() => {
-    return Array.from(
-      new Set(
-        allDebriefs
-          .map((d) => d.team?.trim())
-          .filter((value): value is string => !!value)
-      )
-    ).sort((a, b) => a.localeCompare(b));
+    const teams = allDebriefs
+      .map((d) => safeText(d.team, ""))
+      .filter((team) => team !== "");
+
+    return Array.from(new Set(teams)).sort((a, b) => a.localeCompare(b));
   }, [allDebriefs]);
 
   useEffect(() => {
-    if (availableTeams.length > 0) {
-      if (!selectedTeam || !availableTeams.includes(selectedTeam)) {
-        setSelectedTeam(availableTeams[0]);
-      }
-    } else {
+    if (availableTeams.length === 0) {
       setSelectedTeam("");
+      return;
     }
+
+    if (selectedTeam && availableTeams.includes(selectedTeam)) {
+      return;
+    }
+
+    setSelectedTeam(availableTeams[0]);
   }, [availableTeams, selectedTeam]);
 
   const teamDebriefs = useMemo(() => {
     if (!selectedTeam) return [];
-    return allDebriefs.filter((d) => (d.team ?? "").trim() === selectedTeam);
+    return allDebriefs.filter(
+      (d) => safeText(d.team, "") === selectedTeam
+    );
   }, [allDebriefs, selectedTeam]);
 
   useEffect(() => {
@@ -132,35 +155,37 @@ export default function SummaryPage() {
   const selectedDebriefs = useMemo(() => {
     return selectedDebriefIds
       .map((id) => teamDebriefs.find((d) => d.id === id))
-      .filter((d): d is SubmittedDebrief => !!d);
+      .filter((d): d is SubmittedDebrief => Boolean(d));
   }, [selectedDebriefIds, teamDebriefs]);
 
   const maxCorner = useMemo(() => {
     if (selectedDebriefs.length === 0) return 0;
 
-    const allCornerIds = selectedDebriefs.flatMap((d) =>
-      (d.corner_feedback ?? []).map((c) => c.cornerId)
+    const values = selectedDebriefs.flatMap((debrief) =>
+      (debrief.corner_feedback ?? [])
+        .map((item) => item.cornerId)
+        .filter((value): value is number => typeof value === "number")
     );
 
-    return allCornerIds.length ? Math.max(...allCornerIds) : 0;
+    return values.length ? Math.max(...values) : 0;
   }, [selectedDebriefs]);
 
   const commentsByCorner = useMemo(() => {
-    return Array.from({ length: maxCorner }, (_, i) => {
-      const cornerId = i + 1;
+    return Array.from({ length: maxCorner }, (_, index) => {
+      const cornerId = index + 1;
 
       const comments = selectedDebriefs
         .map((debrief) => {
           const feedback = (debrief.corner_feedback ?? []).find(
             (c) => c.cornerId === cornerId
           );
-          const comment = feedback?.comment?.trim() ?? "";
 
+          const comment = safeText(feedback?.comment, "");
           if (!comment) return null;
 
           return {
-            driverName: debrief.driver_name,
-            sessionName: debrief.session_name ?? "No session",
+            driverName: safeText(debrief.driver_name, "Unknown Driver"),
+            sessionName: safeText(debrief.session_name, "No Session"),
             comment,
           };
         })
@@ -180,7 +205,9 @@ export default function SummaryPage() {
 
   function toggleDebriefSelection(id: string) {
     setSelectedDebriefIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      prev.includes(id)
+        ? prev.filter((item) => item !== id)
+        : [...prev, id]
     );
   }
 
@@ -188,12 +215,13 @@ export default function SummaryPage() {
     if (!selectedTeam) return;
 
     const confirmed = window.confirm(
-      `Are you sure you want to permanently delete all submitted debriefs for team "${selectedTeam}"?`
+      `Are you sure you want to permanently delete all submitted debriefs for "${selectedTeam}"?`
     );
 
     if (!confirmed) return;
 
     setClearing(true);
+    setErrorMessage("");
 
     const { error } = await supabase
       .from("submitted_debriefs")
@@ -202,12 +230,13 @@ export default function SummaryPage() {
 
     if (error) {
       console.error("Error clearing team debriefs:", error);
-      alert("Failed to clear team debriefs. Check console for details.");
-    } else {
-      setSelectedDebriefIds([]);
-      await loadDebriefs();
+      setErrorMessage(error.message || "Failed to clear team debriefs.");
+      setClearing(false);
+      return;
     }
 
+    setSelectedDebriefIds([]);
+    await loadDebriefs();
     setClearing(false);
   }
 
@@ -215,7 +244,7 @@ export default function SummaryPage() {
     window.print();
   }
 
-  const svgWidth = 1400;
+  const svgWidth = 1500;
   const headerHeight = 46;
   const rowHeight = 28;
   const rowsPerCorner = 3;
@@ -223,9 +252,9 @@ export default function SummaryPage() {
   const svgHeight = headerHeight + bodyHeight + 2;
 
   const turnColWidth = 58;
-  const phaseColWidth = 62;
+  const phaseColWidth = 72;
   const graphLeft = turnColWidth + phaseColWidth;
-  const graphWidth = 420;
+  const graphWidth = 430;
   const commentLeft = graphLeft + graphWidth;
   const commentWidth = svgWidth - commentLeft;
 
@@ -234,7 +263,7 @@ export default function SummaryPage() {
       <style jsx global>{`
         @media print {
           body {
-            background: white !important;
+            background: #ffffff !important;
           }
 
           .print-hide {
@@ -242,24 +271,27 @@ export default function SummaryPage() {
           }
 
           .print-shell {
-            box-shadow: none !important;
+            background: #ffffff !important;
+            color: #111827 !important;
             border: 1px solid #d1d5db !important;
-            background: white !important;
+            box-shadow: none !important;
           }
         }
       `}</style>
 
-      <div className="mx-auto max-w-[1600px] space-y-6">
+      <div className="mx-auto max-w-[1700px] space-y-6">
         <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <h1 className="text-3xl font-bold">Team Debrief Summary</h1>
           <p className="mt-2 text-sm text-[#9CA3AF] print:text-[#374151]">
-            Select one team, tick the submitted debrief sheets you want to compare,
-            then print or save the report as a PDF.
+            Select a team, tick the debrief sheets you want to compare, then print or save as PDF.
           </p>
+          {errorMessage ? (
+            <p className="mt-3 text-sm text-red-400 print:text-red-700">{errorMessage}</p>
+          ) : null}
         </section>
 
         <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <div className="grid gap-4 md:grid-cols-[1fr_auto_auto]">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto_auto_auto]">
             <div>
               <label className="mb-2 block text-sm font-medium text-white">
                 Team
@@ -270,16 +302,29 @@ export default function SummaryPage() {
                 className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
               >
                 {availableTeams.length === 0 ? (
-                  <option value="">No teams found</option>
+                  <option value="">No teams available</option>
                 ) : (
-                  availableTeams.map((team) => (
-                    <option key={team} value={team}>
-                      {team}
+                  <>
+                    <option value="" disabled>
+                      Select team
                     </option>
-                  ))
+                    {availableTeams.map((team) => (
+                      <option key={team} value={team}>
+                        {team}
+                      </option>
+                    ))}
+                  </>
                 )}
               </select>
             </div>
+
+            <button
+              type="button"
+              onClick={loadDebriefs}
+              className="self-end rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#243041]"
+            >
+              Refresh
+            </button>
 
             <button
               type="button"
@@ -302,24 +347,24 @@ export default function SummaryPage() {
         </section>
 
         <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <h2 className="text-2xl font-semibold text-white">Available Debriefs</h2>
+          <h2 className="text-2xl font-semibold text-white">Submitted Debriefs</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
-            All submitted debrief sheets for the selected team are listed below.
+            All submitted debrief sheets for the selected team.
           </p>
 
           {loading ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">Loading submitted debriefs...</p>
           ) : !selectedTeam ? (
-            <p className="mt-5 text-sm text-[#9CA3AF]">Select a team to begin.</p>
+            <p className="mt-5 text-sm text-[#9CA3AF]">No team selected.</p>
           ) : teamDebriefs.length === 0 ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">
-              No submitted debriefs were found for this team.
+              No submitted debriefs found for this team.
             </p>
           ) : (
             <div className="mt-5 overflow-hidden rounded-2xl border border-[#2A3441]">
-              <div className="grid grid-cols-[auto_1.2fr_1fr_1fr_1fr] gap-3 bg-[#111827] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
+              <div className="grid grid-cols-[60px_1.2fr_1fr_1fr_1fr] gap-3 bg-[#111827] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
                 <div>Select</div>
-                <div>Name</div>
+                <div>Driver</div>
                 <div>Session</div>
                 <div>Track</div>
                 <div>Submitted</div>
@@ -332,7 +377,7 @@ export default function SummaryPage() {
                   return (
                     <label
                       key={debrief.id}
-                      className="grid cursor-pointer grid-cols-[auto_1.2fr_1fr_1fr_1fr] gap-3 bg-[#1B2430] px-4 py-4 transition hover:bg-[#243041]"
+                      className="grid cursor-pointer grid-cols-[60px_1.2fr_1fr_1fr_1fr] gap-3 bg-[#1B2430] px-4 py-4 transition hover:bg-[#243041]"
                     >
                       <div className="flex items-center">
                         <input
@@ -344,17 +389,19 @@ export default function SummaryPage() {
                       </div>
 
                       <div className="text-sm font-semibold text-white">
-                        {debrief.driver_name}
+                        {safeText(debrief.driver_name, "Unknown Driver")}
                       </div>
 
                       <div className="text-sm text-[#D1D5DB]">
-                        {debrief.session_name || "No session"}
+                        {safeText(debrief.session_name, "No Session")}
                       </div>
 
-                      <div className="text-sm text-[#D1D5DB]">{debrief.track_name}</div>
+                      <div className="text-sm text-[#D1D5DB]">
+                        {safeText(debrief.track_name, "-")}
+                      </div>
 
                       <div className="text-sm text-[#9CA3AF]">
-                        {formatDate(debrief.created_at) || "-"}
+                        {formatDate(debrief.created_at)}
                       </div>
                     </label>
                   );
@@ -380,7 +427,8 @@ export default function SummaryPage() {
                       style={{ backgroundColor: colour }}
                     />
                     <span className="text-sm text-white print:text-[#111827]">
-                      {debrief.driver_name} — {debrief.session_name || "No session"}
+                      {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
+                      {safeText(debrief.session_name, "No Session")}
                     </span>
                   </div>
                 );
@@ -389,7 +437,7 @@ export default function SummaryPage() {
           </div>
 
           <div className="mt-6 overflow-x-auto">
-            <div className="min-w-[1400px] rounded-2xl border border-[#2A3441] bg-[#111827] print:border-[#d1d5db] print:bg-white">
+            <div className="min-w-[1500px] rounded-2xl border border-[#2A3441] bg-[#111827] print:border-[#d1d5db] print:bg-white">
               <svg
                 viewBox={`0 0 ${svgWidth} ${svgHeight}`}
                 className="h-auto w-full"
@@ -397,38 +445,10 @@ export default function SummaryPage() {
               >
                 <rect x={0} y={0} width={svgWidth} height={svgHeight} fill="#f3f4f6" />
 
-                <rect
-                  x={0}
-                  y={0}
-                  width={turnColWidth}
-                  height={headerHeight}
-                  fill="#d1d5db"
-                  stroke="#111827"
-                />
-                <rect
-                  x={turnColWidth}
-                  y={0}
-                  width={phaseColWidth}
-                  height={headerHeight}
-                  fill="#d1d5db"
-                  stroke="#111827"
-                />
-                <rect
-                  x={graphLeft}
-                  y={0}
-                  width={graphWidth}
-                  height={headerHeight}
-                  fill="#d1d5db"
-                  stroke="#111827"
-                />
-                <rect
-                  x={commentLeft}
-                  y={0}
-                  width={commentWidth}
-                  height={headerHeight}
-                  fill="#d1d5db"
-                  stroke="#111827"
-                />
+                <rect x={0} y={0} width={turnColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                <rect x={turnColWidth} y={0} width={phaseColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
 
                 <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
                   Turn
