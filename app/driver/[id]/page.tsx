@@ -95,6 +95,35 @@ function balancePillClass(value: number): string {
   return "bg-red-500/20 text-red-200 border-red-400/40";
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+
+  if (typeof error === "object" && error !== null) {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown object error";
+    }
+  }
+
+  return "Unknown error";
+}
+
+function isValidCornerArray(value: unknown): value is Corner[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (corner) =>
+        typeof corner === "object" &&
+        corner !== null &&
+        typeof (corner as Corner).id === "number" &&
+        typeof (corner as Corner).x === "number" &&
+        typeof (corner as Corner).y === "number"
+    )
+  );
+}
+
 function BalanceSlider({
   label,
   value,
@@ -164,6 +193,7 @@ export default function DriverTemplatePage() {
 
   const [mapAspectRatio, setMapAspectRatio] = useState<number>(1);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [sendStatus, setSendStatus] = useState("");
 
@@ -175,6 +205,9 @@ export default function DriverTemplatePage() {
         return;
       }
 
+      setLoading(true);
+      setLoadError("");
+
       try {
         const { data: templateData, error: templateError } = await supabase
           .from("debrief_templates")
@@ -183,20 +216,29 @@ export default function DriverTemplatePage() {
           .single();
 
         if (templateError) {
-          setLoadError(`Could not load template: ${templateError.message}`);
-          return;
+          throw new Error(`Could not load template: ${templateError.message}`);
         }
 
         if (!templateData) {
-          setLoadError("Template not found.");
-          return;
+          throw new Error("Template not found.");
         }
 
-        const cleanTemplate = templateData as Template;
+        const corners = isValidCornerArray(templateData.corners) ? templateData.corners : [];
+
+        const cleanTemplate: Template = {
+          id: String(templateData.id),
+          track_name: String(templateData.track_name ?? ""),
+          team: String(templateData.team ?? ""),
+          corner_count: Number(templateData.corner_count ?? corners.length),
+          track_map_url:
+            typeof templateData.track_map_url === "string" ? templateData.track_map_url : null,
+          corners,
+        };
+
         setTemplate(cleanTemplate);
-        setSelectedCornerId(cleanTemplate.corners?.[0]?.id ?? null);
+        setSelectedCornerId(corners[0]?.id ?? null);
         setCornerFeedback(
-          cleanTemplate.corners.map((corner: Corner) => ({
+          corners.map((corner) => ({
             cornerId: corner.id,
             entryBalanceValue: 0,
             midBalanceValue: 0,
@@ -213,17 +255,12 @@ export default function DriverTemplatePage() {
           .order("name", { ascending: true });
 
         if (recipientError) {
-          setLoadError((prev) =>
-            prev
-              ? `${prev} | Could not load recipients: ${recipientError.message}`
-              : `Could not load recipients: ${recipientError.message}`
-          );
-        } else {
-          setRecipients((recipientData ?? []) as Recipient[]);
+          throw new Error(`Could not load recipients: ${recipientError.message}`);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        setLoadError(`Failed to load page: ${message}`);
+
+        setRecipients((recipientData ?? []) as Recipient[]);
+      } catch (error) {
+        setLoadError(getErrorMessage(error));
       } finally {
         setLoading(false);
       }
@@ -241,17 +278,13 @@ export default function DriverTemplatePage() {
 
   function updateCornerFeedback(cornerId: number, patch: Partial<CornerFeedback>) {
     setCornerFeedback((prev) =>
-      prev.map((entry) =>
-        entry.cornerId === cornerId ? { ...entry, ...patch } : entry
-      )
+      prev.map((entry) => (entry.cornerId === cornerId ? { ...entry, ...patch } : entry))
     );
   }
 
   function updateIncidentNote(incidentId: number, note: string) {
     setIncidentMarkers((prev) =>
-      prev.map((marker) =>
-        marker.id === incidentId ? { ...marker, note } : marker
-      )
+      prev.map((marker) => (marker.id === incidentId ? { ...marker, note } : marker))
     );
   }
 
@@ -324,10 +357,10 @@ export default function DriverTemplatePage() {
       return;
     }
 
-   if (!driverName.trim()) {
+    if (!driverName.trim()) {
       setSendStatus("Please enter the driver name.");
       return;
-   }
+    }
 
     if (!sessionName.trim()) {
       setSendStatus("Please enter the session.");
@@ -335,7 +368,7 @@ export default function DriverTemplatePage() {
     }
 
     if (!primaryRecipient) {
-     setSendStatus("Please select a primary recipient.");
+      setSendStatus("Please select a primary recipient.");
       return;
     }
 
@@ -345,6 +378,7 @@ export default function DriverTemplatePage() {
     }
 
     try {
+      setSending(true);
       setSendStatus("Sending email...");
 
       const payload = {
@@ -354,28 +388,28 @@ export default function DriverTemplatePage() {
         sessionName: sessionName.trim(),
         trackName: template.track_name,
         trackMapUrl: template.track_map_url,
-       corners: template.corners,
-       primaryRecipientEmail: primaryRecipient.email,
+        corners: template.corners,
+        primaryRecipientEmail: primaryRecipient.email,
         extraRecipientEmail: extraRecipient?.email ?? null,
         primaryLimitation: primaryLimitation.trim(),
         overallComments: overallComments.trim(),
         reliabilityFlags,
-       cornerFeedback: cornerFeedback.map((entry) => ({
-         cornerId: entry.cornerId,
+        cornerFeedback: cornerFeedback.map((entry) => ({
+          cornerId: entry.cornerId,
           entryBalance: balanceValueToLabel(entry.entryBalanceValue),
-         midBalance: balanceValueToLabel(entry.midBalanceValue),
-         exitBalance: balanceValueToLabel(entry.exitBalanceValue),
-         entryBalanceValue: entry.entryBalanceValue,
-         midBalanceValue: entry.midBalanceValue,
-         exitBalanceValue: entry.exitBalanceValue,
-         comment: entry.comment.trim(),
+          midBalance: balanceValueToLabel(entry.midBalanceValue),
+          exitBalance: balanceValueToLabel(entry.exitBalanceValue),
+          entryBalanceValue: entry.entryBalanceValue,
+          midBalanceValue: entry.midBalanceValue,
+          exitBalanceValue: entry.exitBalanceValue,
+          comment: entry.comment.trim(),
         })),
         incidentMarkers,
       };
 
       console.log("SEND PAYLOAD:", payload);
 
-     const response = await fetch("/api/send-debrief", {
+      const response = await fetch("/api/send-debrief", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -383,41 +417,43 @@ export default function DriverTemplatePage() {
         body: JSON.stringify(payload),
       });
 
-    const rawText = await response.text();
+      const contentType = response.headers.get("content-type") || "";
+      let result: any = null;
+      let rawText = "";
 
-    let result: any = null;
+      if (contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        rawText = await response.text();
+        try {
+          result = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          result = { error: rawText };
+        }
+      }
 
-    try {
-      result = rawText ? JSON.parse(rawText) : null;
-    } catch {
-      result = { error: rawText };
-    }
+      console.log("SEND RESPONSE STATUS:", response.status);
+      console.log("SEND RESPONSE BODY:", result);
 
-    console.log("SEND RESPONSE STATUS:", response.status);
-    console.log("SEND RESPONSE BODY:", result);
-
-    if (!response.ok) {
-      setSendStatus(
-        `Send failed (${response.status}): ${
+      if (!response.ok) {
+        const errorMessage =
           result?.error ||
           result?.message ||
           rawText ||
-          "Unknown server error"
-        }`
-      );
-      return;
+          `Server returned ${response.status}`;
+
+        setSendStatus(`Send failed: ${errorMessage}`);
+        return;
+      }
+
+      setSendStatus("Email sent successfully.");
+    } catch (error) {
+      console.error("SEND ERROR:", error);
+      setSendStatus(`Send failed: ${getErrorMessage(error)}`);
+    } finally {
+      setSending(false);
     }
-
-    setSendStatus("Email sent successfully.");
-  } catch (err) {
-    console.error("SEND ERROR:", err);
-
-    const message =
-      err instanceof Error ? err.message : "Unknown network error";
-
-    setSendStatus(`Send failed: ${message}`);
   }
-}
 
   if (loading) {
     return (
@@ -843,9 +879,10 @@ export default function DriverTemplatePage() {
             <button
               type="button"
               onClick={handleSendPdf}
-              className="w-full rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500]"
+              disabled={sending}
+              className="w-full rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Send PDF
+              {sending ? "Sending..." : "Send PDF"}
             </button>
 
             {sendStatus && (
