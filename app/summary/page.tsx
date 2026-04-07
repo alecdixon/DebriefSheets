@@ -22,9 +22,17 @@ type SubmittedDebrief = {
 };
 
 type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
-type PhaseMode = "entry" | "mid" | "exit" | "all";
 
-const lineColours = ["#ef4444", "#2563eb", "#9ca3af"];
+const lineColours = [
+  "#ef4444",
+  "#2563eb",
+  "#22c55e",
+  "#f59e0b",
+  "#a855f7",
+  "#06b6d4",
+  "#e11d48",
+  "#84cc16",
+];
 
 const phaseRows: { key: PhaseKey; label: string }[] = [
   { key: "entryBalanceValue", label: "Entry" },
@@ -52,35 +60,41 @@ function xForBalance(value: number, left: number, width: number) {
   return left + normalised * width;
 }
 
+function formatDate(dateString?: string) {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
 export default function SummaryPage() {
   const [allDebriefs, setAllDebriefs] = useState<SubmittedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [selectedTeam, setSelectedTeam] = useState("");
-  const [selectedTrack, setSelectedTrack] = useState("");
-  const [selectedSession, setSelectedSession] = useState("");
-  const [mode, setMode] = useState<PhaseMode>("entry");
-
   const [selectedDebriefIds, setSelectedDebriefIds] = useState<string[]>([]);
+  const [clearing, setClearing] = useState(false);
 
-  useEffect(() => {
-    async function loadDebriefs() {
-      setLoading(true);
+  async function loadDebriefs() {
+    setLoading(true);
 
-      const { data, error } = await supabase
-        .from("submitted_debriefs")
-        .select(
-          "id, team, driver_name, session_name, track_name, created_at, corner_feedback"
-        )
-        .order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("submitted_debriefs")
+      .select(
+        "id, team, driver_name, session_name, track_name, created_at, corner_feedback"
+      )
+      .order("created_at", { ascending: false });
 
-      if (!error) {
-        setAllDebriefs((data ?? []) as SubmittedDebrief[]);
-      }
-
-      setLoading(false);
+    if (error) {
+      console.error("Error loading debriefs:", error);
+      setAllDebriefs([]);
+    } else {
+      setAllDebriefs((data ?? []) as SubmittedDebrief[]);
     }
 
+    setLoading(false);
+  }
+
+  useEffect(() => {
     loadDebriefs();
   }, []);
 
@@ -91,7 +105,7 @@ export default function SummaryPage() {
           .map((d) => d.team?.trim())
           .filter((value): value is string => !!value)
       )
-    ).sort();
+    ).sort((a, b) => a.localeCompare(b));
   }, [allDebriefs]);
 
   useEffect(() => {
@@ -99,89 +113,65 @@ export default function SummaryPage() {
       if (!selectedTeam || !availableTeams.includes(selectedTeam)) {
         setSelectedTeam(availableTeams[0]);
       }
+    } else {
+      setSelectedTeam("");
     }
   }, [availableTeams, selectedTeam]);
 
-  const filteredByTeam = useMemo(() => {
+  const teamDebriefs = useMemo(() => {
     if (!selectedTeam) return [];
-    return allDebriefs.filter((d) => (d.team ?? "") === selectedTeam);
+    return allDebriefs.filter((d) => (d.team ?? "").trim() === selectedTeam);
   }, [allDebriefs, selectedTeam]);
 
-  const availableTracks = useMemo(() => {
-    return Array.from(
-      new Set(filteredByTeam.map((d) => d.track_name).filter(Boolean))
-    ).sort();
-  }, [filteredByTeam]);
-
   useEffect(() => {
-    if (selectedTrack && !availableTracks.includes(selectedTrack)) {
-      setSelectedTrack("");
-    }
-  }, [availableTracks, selectedTrack]);
-
-  const filteredByTrack = useMemo(() => {
-    if (!selectedTrack) return filteredByTeam;
-    return filteredByTeam.filter((d) => d.track_name === selectedTrack);
-  }, [filteredByTeam, selectedTrack]);
-
-  const availableSessions = useMemo(() => {
-    return Array.from(
-      new Set(filteredByTrack.map((d) => d.session_name ?? "").filter(Boolean))
-    ).sort();
-  }, [filteredByTrack]);
-
-  useEffect(() => {
-    if (selectedSession && !availableSessions.includes(selectedSession)) {
-      setSelectedSession("");
-    }
-  }, [availableSessions, selectedSession]);
-
-  const fullyFilteredDebriefs = useMemo(() => {
-    return filteredByTrack.filter((d) =>
-      selectedSession ? (d.session_name ?? "") === selectedSession : true
+    setSelectedDebriefIds((prev) =>
+      prev.filter((id) => teamDebriefs.some((d) => d.id === id))
     );
-  }, [filteredByTrack, selectedSession]);
-
-  useEffect(() => {
-    const nextIds = fullyFilteredDebriefs.slice(0, 3).map((d) => d.id);
-    setSelectedDebriefIds(nextIds);
-  }, [selectedTeam, selectedTrack, selectedSession, allDebriefs]);
+  }, [teamDebriefs]);
 
   const selectedDebriefs = useMemo(() => {
     return selectedDebriefIds
-      .map((id) => fullyFilteredDebriefs.find((d) => d.id === id))
-      .filter((d): d is SubmittedDebrief => !!d)
-      .slice(0, 3);
-  }, [fullyFilteredDebriefs, selectedDebriefIds]);
+      .map((id) => teamDebriefs.find((d) => d.id === id))
+      .filter((d): d is SubmittedDebrief => !!d);
+  }, [selectedDebriefIds, teamDebriefs]);
 
   const maxCorner = useMemo(() => {
     if (selectedDebriefs.length === 0) return 0;
-    return (
-      Math.max(
-        ...selectedDebriefs.flatMap((d) =>
-          (d.corner_feedback ?? []).map((c) => c.cornerId)
-        )
-      ) || 0
+
+    const allCornerIds = selectedDebriefs.flatMap((d) =>
+      (d.corner_feedback ?? []).map((c) => c.cornerId)
     );
+
+    return allCornerIds.length ? Math.max(...allCornerIds) : 0;
   }, [selectedDebriefs]);
 
   const commentsByCorner = useMemo(() => {
     return Array.from({ length: maxCorner }, (_, i) => {
       const cornerId = i + 1;
+
       const comments = selectedDebriefs
         .map((debrief) => {
           const feedback = (debrief.corner_feedback ?? []).find(
             (c) => c.cornerId === cornerId
           );
           const comment = feedback?.comment?.trim() ?? "";
+
           if (!comment) return null;
+
           return {
             driverName: debrief.driver_name,
+            sessionName: debrief.session_name ?? "No session",
             comment,
           };
         })
         .filter(
-          (item): item is { driverName: string; comment: string } => item !== null
+          (
+            item
+          ): item is {
+            driverName: string;
+            sessionName: string;
+            comment: string;
+          } => item !== null
         );
 
       return { cornerId, comments };
@@ -189,18 +179,43 @@ export default function SummaryPage() {
   }, [selectedDebriefs, maxCorner]);
 
   function toggleDebriefSelection(id: string) {
-    setSelectedDebriefIds((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter((item) => item !== id);
-      }
-      if (prev.length >= 3) {
-        return [...prev.slice(1), id];
-      }
-      return [...prev, id];
-    });
+    setSelectedDebriefIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
   }
 
-  const svgWidth = 980;
+  async function handleClearTeamDebriefs() {
+    if (!selectedTeam) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete all submitted debriefs for team "${selectedTeam}"?`
+    );
+
+    if (!confirmed) return;
+
+    setClearing(true);
+
+    const { error } = await supabase
+      .from("submitted_debriefs")
+      .delete()
+      .eq("team", selectedTeam);
+
+    if (error) {
+      console.error("Error clearing team debriefs:", error);
+      alert("Failed to clear team debriefs. Check console for details.");
+    } else {
+      setSelectedDebriefIds([]);
+      await loadDebriefs();
+    }
+
+    setClearing(false);
+  }
+
+  function handlePrintPdf() {
+    window.print();
+  }
+
+  const svgWidth = 1400;
   const headerHeight = 46;
   const rowHeight = 28;
   const rowsPerCorner = 3;
@@ -210,24 +225,45 @@ export default function SummaryPage() {
   const turnColWidth = 58;
   const phaseColWidth = 62;
   const graphLeft = turnColWidth + phaseColWidth;
-  const graphWidth = 280;
+  const graphWidth = 420;
   const commentLeft = graphLeft + graphWidth;
   const commentWidth = svgWidth - commentLeft;
 
   return (
-    <main className="min-h-screen bg-[#0A0E14] px-4 py-6 text-white md:px-8 md:py-8">
-      <div className="mx-auto max-w-[1400px] space-y-6">
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+    <main className="min-h-screen bg-[#0A0E14] px-4 py-6 text-white md:px-8 md:py-8 print:bg-white print:px-0 print:py-0 print:text-black">
+      <style jsx global>{`
+        @media print {
+          body {
+            background: white !important;
+          }
+
+          .print-hide {
+            display: none !important;
+          }
+
+          .print-shell {
+            box-shadow: none !important;
+            border: 1px solid #d1d5db !important;
+            background: white !important;
+          }
+        }
+      `}</style>
+
+      <div className="mx-auto max-w-[1600px] space-y-6">
+        <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <h1 className="text-3xl font-bold">Team Debrief Summary</h1>
-          <p className="mt-2 text-sm text-[#9CA3AF]">
-            Compare up to three drivers corner by corner and collect all comments in one place.
+          <p className="mt-2 text-sm text-[#9CA3AF] print:text-[#374151]">
+            Select one team, tick the submitted debrief sheets you want to compare,
+            then print or save the report as a PDF.
           </p>
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <div className="grid gap-4 md:grid-cols-4">
+        <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto_auto]">
             <div>
-              <label className="mb-2 block text-sm font-medium text-white">Team</label>
+              <label className="mb-2 block text-sm font-medium text-white">
+                Team
+              </label>
               <select
                 value={selectedTeam}
                 onChange={(e) => setSelectedTeam(e.target.value)}
@@ -245,113 +281,115 @@ export default function SummaryPage() {
               </select>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-white">Track</label>
-              <select
-                value={selectedTrack}
-                onChange={(e) => setSelectedTrack(e.target.value)}
-                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
-              >
-                <option value="">All tracks</option>
-                {availableTracks.map((track) => (
-                  <option key={track} value={track}>
-                    {track}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <button
+              type="button"
+              onClick={handlePrintPdf}
+              disabled={selectedDebriefs.length === 0}
+              className="self-end rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#243041] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Print / Save PDF
+            </button>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-white">Session</label>
-              <select
-                value={selectedSession}
-                onChange={(e) => setSelectedSession(e.target.value)}
-                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
-              >
-                <option value="">All sessions</option>
-                {availableSessions.map((session) => (
-                  <option key={session} value={session}>
-                    {session}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-white">Phase</label>
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as PhaseMode)}
-                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
-              >
-                <option value="entry">Entry</option>
-                <option value="mid">Mid</option>
-                <option value="exit">Exit</option>
-                <option value="all">All</option>
-              </select>
-            </div>
+            <button
+              type="button"
+              onClick={handleClearTeamDebriefs}
+              disabled={!selectedTeam || clearing || teamDebriefs.length === 0}
+              className="self-end rounded-2xl border border-[#7f1d1d] bg-[#7f1d1d]/20 px-5 py-3 text-sm font-semibold text-red-200 transition hover:bg-[#7f1d1d]/35 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {clearing ? "Clearing..." : "Clear Team Debriefs"}
+            </button>
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <h2 className="text-2xl font-semibold text-white">Select Drivers</h2>
+        <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+          <h2 className="text-2xl font-semibold text-white">Available Debriefs</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
-            Choose up to three submitted debriefs from the filtered list.
+            All submitted debrief sheets for the selected team are listed below.
           </p>
 
           {loading ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">Loading submitted debriefs...</p>
-          ) : fullyFilteredDebriefs.length === 0 ? (
+          ) : !selectedTeam ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">Select a team to begin.</p>
+          ) : teamDebriefs.length === 0 ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">
-              No submitted debriefs match the current filters.
+              No submitted debriefs were found for this team.
             </p>
           ) : (
-            <div className="mt-5 grid gap-3">
-              {fullyFilteredDebriefs.map((debrief) => {
-                const active = selectedDebriefIds.includes(debrief.id);
-                return (
-                  <button
-                    key={debrief.id}
-                    type="button"
-                    onClick={() => toggleDebriefSelection(debrief.id)}
-                    className={`rounded-2xl border px-4 py-3 text-left transition ${
-                      active
-                        ? "border-[#E10600] bg-[#E10600]/15 text-white"
-                        : "border-[#2A3441] bg-[#1B2430] text-white"
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="text-sm font-semibold">{debrief.driver_name}</span>
-                      <span className="text-xs text-[#9CA3AF]">{debrief.track_name}</span>
-                      <span className="text-xs text-[#9CA3AF]">
+            <div className="mt-5 overflow-hidden rounded-2xl border border-[#2A3441]">
+              <div className="grid grid-cols-[auto_1.2fr_1fr_1fr_1fr] gap-3 bg-[#111827] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
+                <div>Select</div>
+                <div>Name</div>
+                <div>Session</div>
+                <div>Track</div>
+                <div>Submitted</div>
+              </div>
+
+              <div className="divide-y divide-[#2A3441]">
+                {teamDebriefs.map((debrief) => {
+                  const checked = selectedDebriefIds.includes(debrief.id);
+
+                  return (
+                    <label
+                      key={debrief.id}
+                      className="grid cursor-pointer grid-cols-[auto_1.2fr_1fr_1fr_1fr] gap-3 bg-[#1B2430] px-4 py-4 transition hover:bg-[#243041]"
+                    >
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleDebriefSelection(debrief.id)}
+                          className="h-4 w-4 rounded border-[#2A3441] bg-[#111827] accent-[#E10600]"
+                        />
+                      </div>
+
+                      <div className="text-sm font-semibold text-white">
+                        {debrief.driver_name}
+                      </div>
+
+                      <div className="text-sm text-[#D1D5DB]">
                         {debrief.session_name || "No session"}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
+                      </div>
+
+                      <div className="text-sm text-[#D1D5DB]">{debrief.track_name}</div>
+
+                      <div className="text-sm text-[#9CA3AF]">
+                        {formatDate(debrief.created_at) || "-"}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           )}
         </section>
 
-        <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+        <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <div className="flex flex-wrap items-center gap-6">
-            {selectedDebriefs.map((debrief, index) => {
-              const colour = lineColours[index % lineColours.length];
-              return (
-                <div key={debrief.id} className="flex items-center gap-2">
-                  <span
-                    className="inline-block h-3 w-3 rounded-full"
-                    style={{ backgroundColor: colour }}
-                  />
-                  <span className="text-sm text-white">{debrief.driver_name}</span>
-                </div>
-              );
-            })}
+            {selectedDebriefs.length === 0 ? (
+              <p className="text-sm text-[#9CA3AF] print:text-[#374151]">
+                No debriefs selected.
+              </p>
+            ) : (
+              selectedDebriefs.map((debrief, index) => {
+                const colour = lineColours[index % lineColours.length];
+                return (
+                  <div key={debrief.id} className="flex items-center gap-2">
+                    <span
+                      className="inline-block h-3 w-3 rounded-full"
+                      style={{ backgroundColor: colour }}
+                    />
+                    <span className="text-sm text-white print:text-[#111827]">
+                      {debrief.driver_name} — {debrief.session_name || "No session"}
+                    </span>
+                  </div>
+                );
+              })
+            )}
           </div>
 
           <div className="mt-6 overflow-x-auto">
-            <div className="min-w-[980px] rounded-2xl border border-[#2A3441] bg-[#111827]">
+            <div className="min-w-[1400px] rounded-2xl border border-[#2A3441] bg-[#111827] print:border-[#d1d5db] print:bg-white">
               <svg
                 viewBox={`0 0 ${svgWidth} ${svgHeight}`}
                 className="h-auto w-full"
@@ -359,16 +397,71 @@ export default function SummaryPage() {
               >
                 <rect x={0} y={0} width={svgWidth} height={svgHeight} fill="#f3f4f6" />
 
-                <rect x={0} y={0} width={turnColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                <rect x={turnColWidth} y={0} width={phaseColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                <rect
+                  x={0}
+                  y={0}
+                  width={turnColWidth}
+                  height={headerHeight}
+                  fill="#d1d5db"
+                  stroke="#111827"
+                />
+                <rect
+                  x={turnColWidth}
+                  y={0}
+                  width={phaseColWidth}
+                  height={headerHeight}
+                  fill="#d1d5db"
+                  stroke="#111827"
+                />
+                <rect
+                  x={graphLeft}
+                  y={0}
+                  width={graphWidth}
+                  height={headerHeight}
+                  fill="#d1d5db"
+                  stroke="#111827"
+                />
+                <rect
+                  x={commentLeft}
+                  y={0}
+                  width={commentWidth}
+                  height={headerHeight}
+                  fill="#d1d5db"
+                  stroke="#111827"
+                />
 
                 <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
                   Turn
                 </text>
-                <text x={commentLeft + commentWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
-                  Other Comments
+                <text
+                  x={turnColWidth + phaseColWidth / 2}
+                  y={29}
+                  fontSize="12"
+                  fill="#111827"
+                  fontWeight="700"
+                  textAnchor="middle"
+                >
+                  Phase
+                </text>
+                <text
+                  x={graphLeft + graphWidth / 2}
+                  y={29}
+                  fontSize="12"
+                  fill="#111827"
+                  fontWeight="700"
+                  textAnchor="middle"
+                >
+                  Car Balance
+                </text>
+                <text
+                  x={commentLeft + commentWidth / 2}
+                  y={29}
+                  fontSize="12"
+                  fill="#111827"
+                  fontWeight="700"
+                  textAnchor="middle"
+                >
+                  Comments
                 </text>
 
                 {majorScaleLabels.map((item, index) => {
@@ -444,6 +537,7 @@ export default function SummaryPage() {
 
                       {phaseRows.map((phase, phaseIndex) => {
                         const y = blockY + phaseIndex * rowHeight;
+
                         return (
                           <g key={`${cornerId}-${phase.label}`}>
                             <rect
@@ -498,20 +592,9 @@ export default function SummaryPage() {
                       (c) => c.cornerId === cornerId
                     );
 
-                    const phasesToPlot =
-                      mode === "all"
-                        ? phaseRows
-                        : phaseRows.filter((phase) => {
-                            if (mode === "entry") return phase.key === "entryBalanceValue";
-                            if (mode === "mid") return phase.key === "midBalanceValue";
-                            return phase.key === "exitBalanceValue";
-                          });
-
-                    phasesToPlot.forEach((phase) => {
+                    phaseRows.forEach((phase, phaseIndex) => {
                       const value = feedback?.[phase.key];
                       if (typeof value !== "number") return;
-
-                      const phaseIndex = phaseRows.findIndex((p) => p.key === phase.key);
 
                       const x = xForBalance(value, graphLeft, graphWidth);
                       const y =
@@ -537,6 +620,41 @@ export default function SummaryPage() {
                   );
                 })}
 
+                {selectedDebriefs.map((debrief, driverIndex) => {
+                  const colour = lineColours[driverIndex % lineColours.length];
+
+                  return Array.from({ length: maxCorner }).flatMap((_, cornerIndex) => {
+                    const cornerId = cornerIndex + 1;
+                    const feedback = (debrief.corner_feedback ?? []).find(
+                      (c) => c.cornerId === cornerId
+                    );
+
+                    return phaseRows.map((phase, phaseIndex) => {
+                      const value = feedback?.[phase.key];
+                      if (typeof value !== "number") return null;
+
+                      const x = xForBalance(value, graphLeft, graphWidth);
+                      const y =
+                        headerHeight +
+                        cornerIndex * rowsPerCorner * rowHeight +
+                        phaseIndex * rowHeight +
+                        rowHeight / 2;
+
+                      return (
+                        <circle
+                          key={`${debrief.id}-${cornerId}-${phase.key}`}
+                          cx={x}
+                          cy={y}
+                          r={3.5}
+                          fill={colour}
+                          stroke="#111827"
+                          strokeWidth={0.8}
+                        />
+                      );
+                    });
+                  });
+                })}
+
                 {commentsByCorner.map((corner) => {
                   if (corner.comments.length === 0) return null;
 
@@ -554,8 +672,10 @@ export default function SummaryPage() {
                       fontSize="10"
                       fill="#111827"
                     >
-                      <tspan fontWeight="700">{entry.driverName}: </tspan>
-                      <tspan>{entry.comment}</tspan>
+                      <tspan fontWeight="700">
+                        {entry.driverName} ({entry.sessionName}):
+                      </tspan>
+                      <tspan> {entry.comment}</tspan>
                     </text>
                   ));
                 })}
