@@ -12,6 +12,7 @@ type Corner = {
 
 type Template = {
   id: string;
+  team_name?: string | null;
   track_name: string;
   corner_count: number;
   track_map_url: string | null;
@@ -46,6 +47,46 @@ const reliabilityItems = [
 
 const balanceOptions = ["US 3", "US 2", "US 1", "OK", "OS 1", "OS 2", "OS 3"];
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+
+  if (typeof error === "string") return error;
+
+  if (typeof error === "object" && error !== null) {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown object error";
+    }
+  }
+
+  return "Unknown error";
+}
+
+function normaliseCorners(value: unknown): Corner[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (
+        typeof item === "object" &&
+        item !== null &&
+        "id" in item &&
+        "x" in item &&
+        "y" in item
+      ) {
+        const corner = item as Record<string, unknown>;
+        return {
+          id: Number(corner.id),
+          x: Number(corner.x),
+          y: Number(corner.y),
+        };
+      }
+      return null;
+    })
+    .filter((item): item is Corner => item !== null);
+}
+
 export default function DriverTemplatePage() {
   const params = useParams();
   const templateId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -67,6 +108,7 @@ export default function DriverTemplatePage() {
   const [extraRecipientId, setExtraRecipientId] = useState("");
 
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [sendStatus, setSendStatus] = useState("");
 
@@ -77,6 +119,9 @@ export default function DriverTemplatePage() {
         setLoading(false);
         return;
       }
+
+      setLoading(true);
+      setLoadError("");
 
       try {
         const [
@@ -96,31 +141,48 @@ export default function DriverTemplatePage() {
         ]);
 
         if (templateError) {
-          setLoadError(`Could not load template: ${templateError.message}`);
-        } else if (templateData) {
-          setTemplate(templateData as Template);
-          setSelectedCornerId(templateData.corners?.[0]?.id ?? null);
-          setCornerFeedback(
-            templateData.corners.map((corner: Corner) => ({
-              cornerId: corner.id,
-              balance: "",
-              comment: "",
-            }))
-          );
+          throw new Error(`Could not load template: ${templateError.message}`);
         }
 
+        if (!templateData) {
+          throw new Error("Template not found.");
+        }
+
+        const parsedCorners = normaliseCorners(templateData.corners);
+
+        const parsedTemplate: Template = {
+          id: String(templateData.id),
+          team_name:
+            typeof templateData.team_name === "string" || templateData.team_name === null
+              ? templateData.team_name
+              : null,
+          track_name: String(templateData.track_name ?? ""),
+          corner_count: Number(templateData.corner_count ?? parsedCorners.length),
+          track_map_url:
+            typeof templateData.track_map_url === "string" || templateData.track_map_url === null
+              ? templateData.track_map_url
+              : null,
+          corners: parsedCorners,
+        };
+
+        setTemplate(parsedTemplate);
+        setSelectedCornerId(parsedCorners[0]?.id ?? null);
+        setCornerFeedback(
+          parsedCorners.map((corner) => ({
+            cornerId: corner.id,
+            balance: "",
+            comment: "",
+          }))
+        );
+
         if (recipientError) {
-          setLoadError((prev) =>
-            prev
-              ? `${prev} | Could not load recipients: ${recipientError.message}`
-              : `Could not load recipients: ${recipientError.message}`
-          );
+          setLoadError(`Could not load recipients: ${recipientError.message}`);
+          setRecipients([]);
         } else {
           setRecipients((recipientData ?? []) as Recipient[]);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        setLoadError(`Failed to load page: ${message}`);
+      } catch (error) {
+        setLoadError(getErrorMessage(error));
       } finally {
         setLoading(false);
       }
@@ -167,12 +229,11 @@ export default function DriverTemplatePage() {
   }, [recipients, extraRecipientId]);
 
   const recipientErrorMessage = useMemo(() => {
-    if (!primaryRecipientId) return "";
     if (showExtraRecipient && extraRecipientId && primaryRecipientId === extraRecipientId) {
       return "Additional recipient must be different from the primary recipient.";
     }
     return "";
-  }, [primaryRecipientId, showExtraRecipient, extraRecipientId]);
+  }, [showExtraRecipient, extraRecipientId, primaryRecipientId]);
 
   function goToPreviousCorner() {
     if (!template || selectedCornerId === null) return;
@@ -201,6 +262,11 @@ export default function DriverTemplatePage() {
       return;
     }
 
+    if (!sessionName.trim()) {
+      setSendStatus("Please enter the session name.");
+      return;
+    }
+
     if (!primaryRecipient) {
       setSendStatus("Please select a primary recipient.");
       return;
@@ -211,11 +277,56 @@ export default function DriverTemplatePage() {
       return;
     }
 
-    setSendStatus(
-      `Ready to send PDF to ${primaryRecipient.name}${
-        extraRecipient ? ` and ${extraRecipient.name}` : ""
-      }.`
-    );
+    try {
+      setSending(true);
+      setSendStatus("Sending PDF...");
+
+      const activeReliabilityItems = reliabilityItems.filter((item) => !!reliabilityFlags[item]);
+
+      const payload = {
+        templateId: template.id,
+        team: template.team_name ?? "Unknown Team",
+        trackName: template.track_name,
+        driverName: driverName.trim(),
+        sessionName: sessionName.trim(),
+        overallComments: overallComments.trim(),
+        primaryLimitation: primaryLimitation.trim(),
+        reliabilityItems: activeReliabilityItems,
+        cornerFeedback,
+        recipients: [
+          primaryRecipient.email,
+          ...(extraRecipient ? [extraRecipient.email] : []),
+        ],
+      };
+
+      const response = await fetch("/api/send-debrief", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            `Request failed with status ${response.status}`
+        );
+      }
+
+      setSendStatus(
+        `PDF sent successfully to ${primaryRecipient.name}${
+          extraRecipient ? ` and ${extraRecipient.name}` : ""
+        }.`
+      );
+    } catch (error) {
+      setSendStatus(`Send failed: ${getErrorMessage(error)}`);
+    } finally {
+      setSending(false);
+    }
   }
 
   if (loading) {
@@ -248,6 +359,7 @@ export default function DriverTemplatePage() {
             Driver Debrief
           </h1>
           <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
+            {template.team_name ? `${template.team_name} · ` : ""}
             {template.track_name}
           </p>
           {loadError && <p className="mt-3 text-sm text-red-300">{loadError}</p>}
@@ -318,12 +430,16 @@ export default function DriverTemplatePage() {
 
           <div className="rounded-[24px] bg-[#111827] p-4">
             <div className="relative min-h-[520px] overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]">
-              {template.track_map_url && (
+              {template.track_map_url ? (
                 <img
                   src={template.track_map_url}
                   alt="Track map"
                   className="h-full w-full object-contain"
                 />
+              ) : (
+                <div className="flex h-[520px] items-center justify-center text-sm text-[#9CA3AF]">
+                  No track map uploaded for this template.
+                </div>
               )}
 
               {template.corners.map((corner) => (
@@ -534,9 +650,10 @@ export default function DriverTemplatePage() {
             <button
               type="button"
               onClick={handleSendPdf}
-              className="w-full rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500]"
+              disabled={sending}
+              className="w-full rounded-2xl bg-[#E10600] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#C50500] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Send PDF
+              {sending ? "Sending..." : "Send PDF"}
             </button>
 
             {sendStatus && (
