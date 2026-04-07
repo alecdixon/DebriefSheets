@@ -261,7 +261,7 @@ export default function DriverTemplatePage() {
         setTemplate(cleanTemplate);
         setSelectedCornerId(corners[0]?.id ?? null);
         setCornerFeedback(
-          corners.map((corner) => ({
+          corners.map((corner: Corner) => ({
             cornerId: corner.id,
             entryBalanceValue: 0,
             midBalanceValue: 0,
