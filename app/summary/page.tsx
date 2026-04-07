@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type SubmittedCornerFeedback = {
@@ -83,7 +83,9 @@ export default function SummaryPage() {
   const [selectedDebriefIds, setSelectedDebriefIds] = useState<string[]>([]);
   const [clearing, setClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [rawSample, setRawSample] = useState<string>("");
+  const [printScale, setPrintScale] = useState(1);
+
+  const printContentRef = useRef<HTMLDivElement | null>(null);
 
   async function loadDebriefs() {
     setLoading(true);
@@ -97,16 +99,12 @@ export default function SummaryPage() {
     if (error) {
       console.error("Error loading debriefs:", error);
       setAllDebriefs([]);
-      setRawSample("");
       setErrorMessage(error.message || "Failed to load submitted debriefs.");
       setLoading(false);
       return;
     }
 
     const rows = (data ?? []) as SubmittedDebrief[];
-    console.log("submitted_debriefs rows:", rows);
-
-    setRawSample(JSON.stringify(rows.slice(0, 5), null, 2));
 
     const cleaned = rows.map((row) => ({
       ...row,
@@ -244,8 +242,36 @@ export default function SummaryPage() {
   }
 
   function handlePrintPdf() {
-    window.print();
+    const printable = printContentRef.current;
+    if (!printable) {
+      window.print();
+      return;
+    }
+
+    const contentWidth = printable.scrollWidth;
+    const contentHeight = printable.scrollHeight;
+
+    const pageWidthPx = 1122; // approximate A4 landscape printable width at 96dpi
+    const pageHeightPx = 760; // approximate A4 landscape printable height with margins
+
+    const scaleX = pageWidthPx / contentWidth;
+    const scaleY = pageHeightPx / contentHeight;
+    const nextScale = Math.min(scaleX, scaleY, 1);
+
+    setPrintScale(nextScale);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+      });
+    });
   }
+
+  useEffect(() => {
+    const resetAfterPrint = () => setPrintScale(1);
+    window.addEventListener("afterprint", resetAfterPrint);
+    return () => window.removeEventListener("afterprint", resetAfterPrint);
+  }, []);
 
   const svgWidth = 1500;
   const headerHeight = 46;
@@ -264,9 +290,18 @@ export default function SummaryPage() {
   return (
     <main className="min-h-screen bg-[#0A0E14] px-4 py-6 text-white md:px-8 md:py-8 print:bg-white print:px-0 print:py-0 print:text-black">
       <style jsx global>{`
+        @page {
+          size: A4 landscape;
+          margin: 8mm;
+        }
+
         @media print {
+          html,
           body {
             background: #ffffff !important;
+            width: 100%;
+            height: 100%;
+            overflow: hidden !important;
           }
 
           .print-hide {
@@ -279,10 +314,24 @@ export default function SummaryPage() {
             border: 1px solid #d1d5db !important;
             box-shadow: none !important;
           }
+
+          .print-root {
+            padding: 0 !important;
+            margin: 0 !important;
+            min-height: auto !important;
+          }
+
+          .print-page {
+            width: 100%;
+            height: 100%;
+            overflow: hidden !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
         }
       `}</style>
 
-      <div className="mx-auto max-w-[1700px] space-y-6">
+      <div className="print-root mx-auto max-w-[1700px] space-y-6">
         <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <h1 className="text-3xl font-bold">Team Debrief Summary</h1>
           <p className="mt-2 text-sm text-[#9CA3AF] print:text-[#374151]">
@@ -339,35 +388,6 @@ export default function SummaryPage() {
             >
               {clearing ? "Clearing..." : "Clear Team Debriefs"}
             </button>
-          </div>
-        </section>
-
-        <section className="print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <h2 className="text-xl font-semibold">Debug</h2>
-          <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
-              <p className="text-xs text-[#9CA3AF]">Total rows</p>
-              <p className="mt-1 text-2xl font-bold">{allDebriefs.length}</p>
-            </div>
-            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
-              <p className="text-xs text-[#9CA3AF]">Teams found</p>
-              <p className="mt-1 text-2xl font-bold">{availableTeams.length}</p>
-            </div>
-            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
-              <p className="text-xs text-[#9CA3AF]">Selected team</p>
-              <p className="mt-1 text-sm font-bold">{selectedTeam || "None"}</p>
-            </div>
-            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
-              <p className="text-xs text-[#9CA3AF]">Rows in selected team</p>
-              <p className="mt-1 text-2xl font-bold">{teamDebriefs.length}</p>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-[#2A3441] bg-[#111827] p-4">
-            <p className="mb-2 text-sm font-semibold text-white">First rows returned from Supabase</p>
-            <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-all text-xs text-[#D1D5DB]">
-              {rawSample || "No data returned"}
-            </pre>
           </div>
         </section>
 
@@ -436,225 +456,254 @@ export default function SummaryPage() {
           )}
         </section>
 
-        <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <div className="flex flex-wrap items-center gap-6">
-            {selectedDebriefs.length === 0 ? (
-              <p className="text-sm text-[#9CA3AF] print:text-[#374151]">
-                No debriefs selected.
-              </p>
-            ) : (
-              selectedDebriefs.map((debrief, index) => {
-                const colour = lineColours[index % lineColours.length];
-                return (
-                  <div key={debrief.id} className="flex items-center gap-2">
-                    <span
-                      className="inline-block h-3 w-3 rounded-full"
-                      style={{ backgroundColor: colour }}
-                    />
-                    <span className="text-sm text-white print:text-[#111827]">
-                      {safeText(debrief.driver_name, "Unknown Driver")} — {safeText(debrief.session_name, "No Session")}
-                    </span>
-                  </div>
-                );
-              })
-            )}
-          </div>
+        <div
+          className="print-page"
+          style={{
+            transform: `scale(${printScale})`,
+            transformOrigin: "top left",
+            width: printScale < 1 ? `${100 / printScale}%` : "100%",
+          }}
+        >
+          <div ref={printContentRef}>
+            <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+              <div className="flex flex-wrap items-center gap-6">
+                {selectedDebriefs.length === 0 ? (
+                  <p className="text-sm text-[#9CA3AF] print:text-[#374151]">
+                    No debriefs selected.
+                  </p>
+                ) : (
+                  selectedDebriefs.map((debrief, index) => {
+                    const colour = lineColours[index % lineColours.length];
+                    return (
+                      <div key={debrief.id} className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-3 w-3 rounded-full"
+                          style={{ backgroundColor: colour }}
+                        />
+                        <span className="text-sm text-white print:text-[#111827]">
+                          {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
+                          {safeText(debrief.session_name, "No Session")}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
 
-          <div className="mt-6 overflow-x-auto">
-            <div className="min-w-[1500px] rounded-2xl border border-[#2A3441] bg-[#111827] print:border-[#d1d5db] print:bg-white">
-              <svg
-                viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-                className="h-auto w-full"
-                preserveAspectRatio="xMinYMin meet"
-              >
-                <rect x={0} y={0} width={svgWidth} height={svgHeight} fill="#f3f4f6" />
+              <div className="mt-6 overflow-x-auto print:overflow-visible">
+                <div className="min-w-[1500px] rounded-2xl border border-[#2A3441] bg-[#111827] print:min-w-0 print:border-[#d1d5db] print:bg-white">
+                  <svg
+                    viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                    className="h-auto w-full"
+                    preserveAspectRatio="xMinYMin meet"
+                  >
+                    <rect x={0} y={0} width={svgWidth} height={svgHeight} fill="#f3f4f6" />
 
-                <rect x={0} y={0} width={turnColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                <rect x={turnColWidth} y={0} width={phaseColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                    <rect x={0} y={0} width={turnColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                    <rect x={turnColWidth} y={0} width={phaseColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                    <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                    <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
 
-                <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">Turn</text>
-                <text x={turnColWidth + phaseColWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">Phase</text>
-                <text x={graphLeft + graphWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">Car Balance</text>
-                <text x={commentLeft + commentWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">Comments</text>
+                    <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">Turn</text>
+                    <text x={turnColWidth + phaseColWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                      Phase
+                    </text>
+                    <text x={graphLeft + graphWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                      Car Balance
+                    </text>
+                    <text x={commentLeft + commentWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                      Comments
+                    </text>
 
-                {majorScaleLabels.map((item, index) => {
-                  const cellWidth = graphWidth / 7;
-                  const x = xForBalance(item.value, graphLeft, graphWidth);
-
-                  return (
-                    <g key={item.label}>
-                      <rect
-                        x={graphLeft + index * cellWidth}
-                        y={0}
-                        width={cellWidth}
-                        height={18}
-                        fill={item.fill}
-                        stroke="#111827"
-                      />
-                      <text x={x} y={13} fontSize="10" fill="#111827" fontWeight="700" textAnchor="middle">
-                        {item.label}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                {Array.from({ length: 13 }, (_, i) => {
-                  const value = -3 + i * 0.5;
-                  const x = xForBalance(value, graphLeft, graphWidth);
-                  const isMajor = Number.isInteger(value);
-
-                  return (
-                    <line
-                      key={value}
-                      x1={x}
-                      x2={x}
-                      y1={headerHeight}
-                      y2={svgHeight}
-                      stroke="#6b7280"
-                      strokeDasharray={isMajor ? "0" : "4 4"}
-                      strokeWidth={isMajor ? 1.1 : 0.7}
-                    />
-                  );
-                })}
-
-                {Array.from({ length: maxCorner }).map((_, cornerIndex) => {
-                  const cornerId = cornerIndex + 1;
-                  const blockY = headerHeight + cornerIndex * rowsPerCorner * rowHeight;
-
-                  return (
-                    <g key={`corner-${cornerId}`}>
-                      <rect x={0} y={blockY} width={turnColWidth} height={rowsPerCorner * rowHeight} fill="#ffffff" stroke="#111827" />
-                      <text
-                        x={turnColWidth / 2}
-                        y={blockY + rowsPerCorner * rowHeight / 2 + 6}
-                        fontSize="24"
-                        fill="#111827"
-                        textAnchor="middle"
-                      >
-                        {cornerId}
-                      </text>
-
-                      {phaseRows.map((phase, phaseIndex) => {
-                        const y = blockY + phaseIndex * rowHeight;
-
-                        return (
-                          <g key={`${cornerId}-${phase.label}`}>
-                            <rect x={turnColWidth} y={y} width={phaseColWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
-                            <text
-                              x={turnColWidth + phaseColWidth / 2}
-                              y={y + 18}
-                              fontSize="11"
-                              fill="#111827"
-                              textAnchor="middle"
-                            >
-                              {phase.label}
-                            </text>
-
-                            <rect x={graphLeft} y={y} width={graphWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
-                            <rect x={commentLeft} y={y} width={commentWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
-                          </g>
-                        );
-                      })}
-                    </g>
-                  );
-                })}
-
-                {selectedDebriefs.map((debrief, driverIndex) => {
-                  const colour = lineColours[driverIndex % lineColours.length];
-                  const points: string[] = [];
-
-                  Array.from({ length: maxCorner }).forEach((_, cornerIndex) => {
-                    const cornerId = cornerIndex + 1;
-                    const feedback = (debrief.corner_feedback ?? []).find((c) => c.cornerId === cornerId);
-
-                    phaseRows.forEach((phase, phaseIndex) => {
-                      const value = feedback?.[phase.key];
-                      if (typeof value !== "number") return;
-
-                      const x = xForBalance(value, graphLeft, graphWidth);
-                      const y =
-                        headerHeight +
-                        cornerIndex * rowsPerCorner * rowHeight +
-                        phaseIndex * rowHeight +
-                        rowHeight / 2;
-
-                      points.push(`${x},${y}`);
-                    });
-                  });
-
-                  if (points.length < 2) return null;
-
-                  return (
-                    <polyline
-                      key={debrief.id}
-                      fill="none"
-                      stroke={colour}
-                      strokeWidth="2.5"
-                      points={points.join(" ")}
-                    />
-                  );
-                })}
-
-                {selectedDebriefs.map((debrief, driverIndex) => {
-                  const colour = lineColours[driverIndex % lineColours.length];
-
-                  return Array.from({ length: maxCorner }).flatMap((_, cornerIndex) => {
-                    const cornerId = cornerIndex + 1;
-                    const feedback = (debrief.corner_feedback ?? []).find((c) => c.cornerId === cornerId);
-
-                    return phaseRows.map((phase, phaseIndex) => {
-                      const value = feedback?.[phase.key];
-                      if (typeof value !== "number") return null;
-
-                      const x = xForBalance(value, graphLeft, graphWidth);
-                      const y =
-                        headerHeight +
-                        cornerIndex * rowsPerCorner * rowHeight +
-                        phaseIndex * rowHeight +
-                        rowHeight / 2;
+                    {majorScaleLabels.map((item, index) => {
+                      const cellWidth = graphWidth / 7;
+                      const x = xForBalance(item.value, graphLeft, graphWidth);
 
                       return (
-                        <circle
-                          key={`${debrief.id}-${cornerId}-${phase.key}`}
-                          cx={x}
-                          cy={y}
-                          r={3.5}
-                          fill={colour}
-                          stroke="#111827"
-                          strokeWidth={0.8}
+                        <g key={item.label}>
+                          <rect
+                            x={graphLeft + index * cellWidth}
+                            y={0}
+                            width={cellWidth}
+                            height={18}
+                            fill={item.fill}
+                            stroke="#111827"
+                          />
+                          <text x={x} y={13} fontSize="10" fill="#111827" fontWeight="700" textAnchor="middle">
+                            {item.label}
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                    {Array.from({ length: 13 }, (_, i) => {
+                      const value = -3 + i * 0.5;
+                      const x = xForBalance(value, graphLeft, graphWidth);
+                      const isMajor = Number.isInteger(value);
+
+                      return (
+                        <line
+                          key={value}
+                          x1={x}
+                          x2={x}
+                          y1={headerHeight}
+                          y2={svgHeight}
+                          stroke="#6b7280"
+                          strokeDasharray={isMajor ? "0" : "4 4"}
+                          strokeWidth={isMajor ? 1.1 : 0.7}
                         />
                       );
-                    });
-                  });
-                })}
+                    })}
 
-                {commentsByCorner.map((corner) => {
-                  if (corner.comments.length === 0) return null;
+                    {Array.from({ length: maxCorner }).map((_, cornerIndex) => {
+                      const cornerId = cornerIndex + 1;
+                      const blockY = headerHeight + cornerIndex * rowsPerCorner * rowHeight;
 
-                  const blockY = headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
-                  const lineHeight = 11;
+                      return (
+                        <g key={`corner-${cornerId}`}>
+                          <rect
+                            x={0}
+                            y={blockY}
+                            width={turnColWidth}
+                            height={rowsPerCorner * rowHeight}
+                            fill="#ffffff"
+                            stroke="#111827"
+                          />
+                          <text
+                            x={turnColWidth / 2}
+                            y={blockY + rowsPerCorner * rowHeight / 2 + 6}
+                            fontSize="24"
+                            fill="#111827"
+                            textAnchor="middle"
+                          >
+                            {cornerId}
+                          </text>
 
-                  return corner.comments.slice(0, 3).map((entry, index) => (
-                    <text
-                      key={`comment-${corner.cornerId}-${entry.driverName}-${index}`}
-                      x={commentLeft + 8}
-                      y={blockY + 16 + index * lineHeight}
-                      fontSize="10"
-                      fill="#111827"
-                    >
-                      <tspan fontWeight="700">
-                        {entry.driverName} ({entry.sessionName}):
-                      </tspan>
-                      <tspan> {entry.comment}</tspan>
-                    </text>
-                  ));
-                })}
-              </svg>
-            </div>
+                          {phaseRows.map((phase, phaseIndex) => {
+                            const y = blockY + phaseIndex * rowHeight;
+
+                            return (
+                              <g key={`${cornerId}-${phase.label}`}>
+                                <rect x={turnColWidth} y={y} width={phaseColWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
+                                <text
+                                  x={turnColWidth + phaseColWidth / 2}
+                                  y={y + 18}
+                                  fontSize="11"
+                                  fill="#111827"
+                                  textAnchor="middle"
+                                >
+                                  {phase.label}
+                                </text>
+
+                                <rect x={graphLeft} y={y} width={graphWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
+                                <rect x={commentLeft} y={y} width={commentWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
+                              </g>
+                            );
+                          })}
+                        </g>
+                      );
+                    })}
+
+                    {selectedDebriefs.map((debrief, driverIndex) => {
+                      const colour = lineColours[driverIndex % lineColours.length];
+                      const points: string[] = [];
+
+                      Array.from({ length: maxCorner }).forEach((_, cornerIndex) => {
+                        const cornerId = cornerIndex + 1;
+                        const feedback = (debrief.corner_feedback ?? []).find(
+                          (c) => c.cornerId === cornerId
+                        );
+
+                        phaseRows.forEach((phase, phaseIndex) => {
+                          const value = feedback?.[phase.key];
+                          if (typeof value !== "number") return;
+
+                          const x = xForBalance(value, graphLeft, graphWidth);
+                          const y =
+                            headerHeight +
+                            cornerIndex * rowsPerCorner * rowHeight +
+                            phaseIndex * rowHeight +
+                            rowHeight / 2;
+
+                          points.push(`${x},${y}`);
+                        });
+                      });
+
+                      if (points.length < 2) return null;
+
+                      return (
+                        <polyline
+                          key={debrief.id}
+                          fill="none"
+                          stroke={colour}
+                          strokeWidth="2.5"
+                          points={points.join(" ")}
+                        />
+                      );
+                    })}
+
+                    {selectedDebriefs.map((debrief, driverIndex) => {
+                      const colour = lineColours[driverIndex % lineColours.length];
+
+                      return Array.from({ length: maxCorner }).flatMap((_, cornerIndex) => {
+                        const cornerId = cornerIndex + 1;
+                        const feedback = (debrief.corner_feedback ?? []).find(
+                          (c) => c.cornerId === cornerId
+                        );
+
+                        return phaseRows.map((phase, phaseIndex) => {
+                          const value = feedback?.[phase.key];
+                          if (typeof value !== "number") return null;
+
+                          const x = xForBalance(value, graphLeft, graphWidth);
+                          const y =
+                            headerHeight +
+                            cornerIndex * rowsPerCorner * rowHeight +
+                            phaseIndex * rowHeight +
+                            rowHeight / 2;
+
+                          return (
+                            <circle
+                              key={`${debrief.id}-${cornerId}-${phase.key}`}
+                              cx={x}
+                              cy={y}
+                              r={3.5}
+                              fill={colour}
+                              stroke="#111827"
+                              strokeWidth={0.8}
+                            />
+                          );
+                        });
+                      });
+                    })}
+
+                    {commentsByCorner.map((corner) => {
+                      if (corner.comments.length === 0) return null;
+
+                      const blockY = headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
+                      const lineHeight = 11;
+
+                      return corner.comments.slice(0, 3).map((entry, index) => (
+                        <text
+                          key={`comment-${corner.cornerId}-${entry.driverName}-${index}`}
+                          x={commentLeft + 8}
+                          y={blockY + 16 + index * lineHeight}
+                          fontSize="10"
+                          fill="#111827"
+                        >
+                          <tspan fontWeight="700">
+                            {entry.driverName} ({entry.sessionName}):
+                          </tspan>
+                          <tspan> {entry.comment}</tspan>
+                        </text>
+                      ));
+                    })}
+                  </svg>
+                </div>
+              </div>
+            </section>
           </div>
-        </section>
+        </div>
       </div>
     </main>
   );
