@@ -324,13 +324,18 @@ export default function DriverTemplatePage() {
       return;
     }
 
-    if (!driverName.trim()) {
+   if (!driverName.trim()) {
       setSendStatus("Please enter the driver name.");
+      return;
+   }
+
+    if (!sessionName.trim()) {
+      setSendStatus("Please enter the session.");
       return;
     }
 
     if (!primaryRecipient) {
-      setSendStatus("Please select a primary recipient.");
+     setSendStatus("Please select a primary recipient.");
       return;
     }
 
@@ -342,51 +347,77 @@ export default function DriverTemplatePage() {
     try {
       setSendStatus("Sending email...");
 
-      const response = await fetch("/api/send-debrief", {
+      const payload = {
+        team: template.team,
+        templateId: template.id,
+        driverName: driverName.trim(),
+        sessionName: sessionName.trim(),
+        trackName: template.track_name,
+        trackMapUrl: template.track_map_url,
+       corners: template.corners,
+       primaryRecipientEmail: primaryRecipient.email,
+        extraRecipientEmail: extraRecipient?.email ?? null,
+        primaryLimitation: primaryLimitation.trim(),
+        overallComments: overallComments.trim(),
+        reliabilityFlags,
+       cornerFeedback: cornerFeedback.map((entry) => ({
+         cornerId: entry.cornerId,
+          entryBalance: balanceValueToLabel(entry.entryBalanceValue),
+         midBalance: balanceValueToLabel(entry.midBalanceValue),
+         exitBalance: balanceValueToLabel(entry.exitBalanceValue),
+         entryBalanceValue: entry.entryBalanceValue,
+         midBalanceValue: entry.midBalanceValue,
+         exitBalanceValue: entry.exitBalanceValue,
+         comment: entry.comment.trim(),
+        })),
+        incidentMarkers,
+      };
+
+      console.log("SEND PAYLOAD:", payload);
+
+     const response = await fetch("/api/send-debrief", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          team: template.team,
-          templateId: template.id,
-          driverName: driverName.trim(),
-          sessionName: sessionName.trim(),
-          trackName: template.track_name,
-          trackMapUrl: template.track_map_url,
-          corners: template.corners,
-          primaryRecipientEmail: primaryRecipient.email,
-          extraRecipientEmail: extraRecipient?.email ?? "",
-          primaryLimitation,
-          overallComments,
-          reliabilityFlags,
-          cornerFeedback: cornerFeedback.map((entry) => ({
-            cornerId: entry.cornerId,
-            entryBalance: balanceValueToLabel(entry.entryBalanceValue),
-            midBalance: balanceValueToLabel(entry.midBalanceValue),
-            exitBalance: balanceValueToLabel(entry.exitBalanceValue),
-            entryBalanceValue: entry.entryBalanceValue,
-            midBalanceValue: entry.midBalanceValue,
-            exitBalanceValue: entry.exitBalanceValue,
-            comment: entry.comment,
-          })),
-          incidentMarkers,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const result = await response.json();
+    const rawText = await response.text();
 
-      if (!response.ok) {
-        setSendStatus(`Send failed: ${result.error || "Unknown error"}`);
-        return;
-      }
+    let result: any = null;
 
-      setSendStatus("Email sent successfully.");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setSendStatus(`Send failed: ${message}`);
+    try {
+      result = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      result = { error: rawText };
     }
+
+    console.log("SEND RESPONSE STATUS:", response.status);
+    console.log("SEND RESPONSE BODY:", result);
+
+    if (!response.ok) {
+      setSendStatus(
+        `Send failed (${response.status}): ${
+          result?.error ||
+          result?.message ||
+          rawText ||
+          "Unknown server error"
+        }`
+      );
+      return;
+    }
+
+    setSendStatus("Email sent successfully.");
+  } catch (err) {
+    console.error("SEND ERROR:", err);
+
+    const message =
+      err instanceof Error ? err.message : "Unknown network error";
+
+    setSendStatus(`Send failed: ${message}`);
   }
+}
 
   if (loading) {
     return (
