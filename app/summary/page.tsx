@@ -332,15 +332,6 @@ export default function SummaryPage() {
       `}</style>
 
       <div className="print-root mx-auto max-w-[1700px] space-y-6">
-        <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <h1 className="text-3xl font-bold">Team Debrief Summary</h1>
-          <p className="mt-2 text-sm text-[#9CA3AF] print:text-[#374151]">
-            Select a team, tick the debrief sheets you want to compare, then print or save as PDF.
-          </p>
-          {errorMessage ? (
-            <p className="mt-3 text-sm text-red-400 print:text-red-700">{errorMessage}</p>
-          ) : null}
-        </section>
 
         <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <div className="grid gap-4 md:grid-cols-[1fr_auto_auto_auto]">
