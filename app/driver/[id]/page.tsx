@@ -110,6 +110,29 @@ function getErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
+function normaliseApiError(value: unknown): string {
+  if (typeof value === "string") return value;
+
+  if (value instanceof Error) return value.message;
+
+  if (typeof value === "object" && value !== null) {
+    const maybeMessage =
+      "message" in value && typeof (value as { message?: unknown }).message === "string"
+        ? (value as { message: string }).message
+        : null;
+
+    if (maybeMessage) return maybeMessage;
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return "Unknown server error object";
+    }
+  }
+
+  return String(value);
+}
+
 function isValidCornerArray(value: unknown): value is Corner[] {
   return (
     Array.isArray(value) &&
@@ -436,13 +459,11 @@ export default function DriverTemplatePage() {
       console.log("SEND RESPONSE BODY:", result);
 
       if (!response.ok) {
-        const errorMessage =
-          result?.error ||
-          result?.message ||
-          rawText ||
-          `Server returned ${response.status}`;
+        const errorMessage = normaliseApiError(
+          result?.error ?? result?.message ?? rawText ?? `Server returned ${response.status}`
+        );
 
-        setSendStatus(`Send failed: ${errorMessage}`);
+        setSendStatus(`Send failed (${response.status}): ${errorMessage}`);
         return;
       }
 
@@ -886,7 +907,7 @@ export default function DriverTemplatePage() {
             </button>
 
             {sendStatus && (
-              <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
+              <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF] whitespace-pre-wrap break-words">
                 {sendStatus}
               </div>
             )}
