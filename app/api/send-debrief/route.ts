@@ -622,9 +622,33 @@ async function buildDebriefPdf(payload: {
     );
 
     const chipY = cursorY - 17;
-    drawBalanceChip(currentPage, margin + 66, chipY, 52, 18, row.entryBalance || "-", row.entryBalanceValue);
-    drawBalanceChip(currentPage, margin + 136, chipY, 52, 18, row.midBalance || "-", row.midBalanceValue);
-    drawBalanceChip(currentPage, margin + 206, chipY, 52, 18, row.exitBalance || "-", row.exitBalanceValue);
+    drawBalanceChip(
+      currentPage,
+      margin + 66,
+      chipY,
+      52,
+      18,
+      row.entryBalance || "-",
+      row.entryBalanceValue
+    );
+    drawBalanceChip(
+      currentPage,
+      margin + 136,
+      chipY,
+      52,
+      18,
+      row.midBalance || "-",
+      row.midBalanceValue
+    );
+    drawBalanceChip(
+      currentPage,
+      margin + 206,
+      chipY,
+      52,
+      18,
+      row.exitBalance || "-",
+      row.exitBalanceValue
+    );
 
     commentLines.forEach((line, i) => {
       currentPage.drawText(line, {
@@ -750,23 +774,33 @@ export async function POST(request: Request) {
       );
     }
 
-    const recipients = [primaryRecipientEmail];
-    if (extraRecipientEmail && extraRecipientEmail !== primaryRecipientEmail) {
-      recipients.push(extraRecipientEmail);
+    const intendedRecipients = [primaryRecipientEmail];
+
+    if (
+      extraRecipientEmail &&
+      extraRecipientEmail !== primaryRecipientEmail
+    ) {
+      intendedRecipients.push(extraRecipientEmail);
     }
 
-    const { error: saveError } = await supabase.from("submitted_debriefs").insert({
-      team: team ?? null,
-      template_id: templateId ?? null,
-      track_name: trackName,
-      session_name: sessionName ?? null,
-      driver_name: driverName,
-      primary_limitation: primaryLimitation ?? null,
-      overall_comments: overallComments ?? null,
-      reliability_flags: reliabilityFlags ?? {},
-      corner_feedback: cornerFeedback ?? [],
-      incident_markers: incidentMarkers ?? [],
-    });
+    // Temporary sandbox workaround: always send to Alec
+    const recipients = ["alec.dixon@rodinmotorsport.com"];
+    const forwardTag = intendedRecipients.join(",");
+
+    const { error: saveError } = await supabase
+      .from("submitted_debriefs")
+      .insert({
+        team: team ?? null,
+        template_id: templateId ?? null,
+        track_name: trackName,
+        session_name: sessionName ?? null,
+        driver_name: driverName,
+        primary_limitation: primaryLimitation ?? null,
+        overall_comments: overallComments ?? null,
+        reliability_flags: reliabilityFlags ?? {},
+        corner_feedback: cornerFeedback ?? [],
+        incident_markers: incidentMarkers ?? [],
+      });
 
     if (saveError) {
       return NextResponse.json(
@@ -793,10 +827,13 @@ export async function POST(request: Request) {
     const { data, error } = await resend.emails.send({
       from: "Debrief App <onboarding@resend.dev>",
       to: recipients,
-      subject: `${trackName} debrief - ${driverName}`,
+      subject: `[FORWARD_TO=${forwardTag}] [TEAM=${team ?? "UNKNOWN"}] ${trackName} debrief - ${driverName}`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.5;">
           <h2>Driver Debrief Submitted</h2>
+          <p><strong>Temporary routing:</strong> this email was sent to Alec for forwarding.</p>
+          <p><strong>Intended recipient(s):</strong> ${intendedRecipients.join(", ")}</p>
+          <p><strong>Team:</strong> ${team ?? "Not provided"}</p>
           <p><strong>Track:</strong> ${trackName}</p>
           <p><strong>Driver:</strong> ${driverName}</p>
           <p><strong>Session:</strong> ${sessionName || "Not provided"}</p>
@@ -820,7 +857,12 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({
+      success: true,
+      data,
+      routedTo: recipients,
+      intendedRecipients,
+    });
   } catch (error) {
     console.error("send-debrief route failed:", error);
 
