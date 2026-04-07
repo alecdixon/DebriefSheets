@@ -21,7 +21,12 @@ type Template = {
 
 type CornerFeedback = {
   cornerId: number;
-  balance: string;
+  entryBalance: string;
+  midBalance: string;
+  exitBalance: string;
+  entryBalanceValue?: number;
+  midBalanceValue?: number;
+  exitBalanceValue?: number;
   comment: string;
 };
 
@@ -30,6 +35,13 @@ type Recipient = {
   name: string;
   email: string;
   active: boolean;
+};
+
+type IncidentMarker = {
+  id: number;
+  x: number;
+  y: number;
+  note: string;
 };
 
 const reliabilityItems = [
@@ -47,9 +59,18 @@ const reliabilityItems = [
 
 const balanceOptions = ["US 3", "US 2", "US 1", "OK", "OS 1", "OS 2", "OS 3"];
 
+const balanceValueMap: Record<string, number> = {
+  "US 3": -3,
+  "US 2": -2,
+  "US 1": -1,
+  OK: 0,
+  "OS 1": 1,
+  "OS 2": 2,
+  "OS 3": 3,
+};
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-
   if (typeof error === "string") return error;
 
   if (typeof error === "object" && error !== null) {
@@ -101,6 +122,7 @@ export default function DriverTemplatePage() {
 
   const [reliabilityFlags, setReliabilityFlags] = useState<Record<string, boolean>>({});
   const [cornerFeedback, setCornerFeedback] = useState<CornerFeedback[]>([]);
+  const [incidentMarkers] = useState<IncidentMarker[]>([]);
 
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [primaryRecipientId, setPrimaryRecipientId] = useState("");
@@ -168,9 +190,14 @@ export default function DriverTemplatePage() {
         setTemplate(parsedTemplate);
         setSelectedCornerId(parsedCorners[0]?.id ?? null);
         setCornerFeedback(
-          parsedCorners.map((corner) => ({
+          parsedCorners.map((corner: Corner) => ({
             cornerId: corner.id,
-            balance: "",
+            entryBalance: "",
+            midBalance: "",
+            exitBalance: "",
+            entryBalanceValue: undefined,
+            midBalanceValue: undefined,
+            exitBalanceValue: undefined,
             comment: "",
           }))
         );
@@ -215,9 +242,14 @@ export default function DriverTemplatePage() {
   }, [cornerFeedback, selectedCornerId]);
 
   const completedCorners = useMemo(() => {
-    return cornerFeedback.filter(
-      (entry) => entry.balance.trim() !== "" || entry.comment.trim() !== ""
-    ).length;
+    return cornerFeedback.filter((entry) => {
+      return (
+        entry.entryBalance.trim() !== "" ||
+        entry.midBalance.trim() !== "" ||
+        entry.exitBalance.trim() !== "" ||
+        entry.comment.trim() !== ""
+      );
+    }).length;
   }, [cornerFeedback]);
 
   const primaryRecipient = useMemo(() => {
@@ -281,22 +313,21 @@ export default function DriverTemplatePage() {
       setSending(true);
       setSendStatus("Sending PDF...");
 
-      const activeReliabilityItems = reliabilityItems.filter((item) => !!reliabilityFlags[item]);
-
       const payload = {
         templateId: template.id,
         team: template.team_name ?? "Unknown Team",
         trackName: template.track_name,
+        trackMapUrl: template.track_map_url,
+        corners: template.corners,
+        incidentMarkers,
         driverName: driverName.trim(),
         sessionName: sessionName.trim(),
         overallComments: overallComments.trim(),
         primaryLimitation: primaryLimitation.trim(),
-        reliabilityItems: activeReliabilityItems,
+        reliabilityFlags,
         cornerFeedback,
-        recipients: [
-          primaryRecipient.email,
-          ...(extraRecipient ? [extraRecipient.email] : []),
-        ],
+        primaryRecipientEmail: primaryRecipient.email,
+        extraRecipientEmail: extraRecipient?.email ?? null,
       };
 
       const response = await fetch("/api/send-debrief", {
@@ -442,7 +473,7 @@ export default function DriverTemplatePage() {
                 </div>
               )}
 
-              {template.corners.map((corner) => (
+              {template.corners.map((corner: Corner) => (
                 <button
                   key={corner.id}
                   type="button"
@@ -466,7 +497,7 @@ export default function DriverTemplatePage() {
             <div>
               <h2 className="text-2xl font-semibold text-white">Selected Corner</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Enter the balance and any comments for the selected corner.
+                Enter entry, mid and exit balance plus any comments.
               </p>
             </div>
 
@@ -480,33 +511,44 @@ export default function DriverTemplatePage() {
           {!selectedCorner || !selectedCornerEntry ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">Select a corner on the map above.</p>
           ) : (
-            <div className="mt-5 space-y-5">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-white">
-                  Balance
-                </label>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-                  {balanceOptions.map((option) => {
-                    const active = selectedCornerEntry.balance === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() =>
-                          updateCornerFeedback(selectedCorner.id, { balance: option })
-                        }
-                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                          active
-                            ? "border-[#E10600] bg-[#E10600] text-white"
-                            : "border-[#2A3441] bg-[#1B2430] text-white hover:border-[#E10600]"
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
+            <div className="mt-5 space-y-6">
+              {(
+                [
+                  ["Entry", "entryBalance", "entryBalanceValue"],
+                  ["Mid", "midBalance", "midBalanceValue"],
+                  ["Exit", "exitBalance", "exitBalanceValue"],
+                ] as const
+              ).map(([label, textKey, valueKey]) => (
+                <div key={label}>
+                  <label className="mb-2 block text-sm font-medium text-white">
+                    {label}
+                  </label>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+                    {balanceOptions.map((option) => {
+                      const active = selectedCornerEntry[textKey] === option;
+                      return (
+                        <button
+                          key={`${label}-${option}`}
+                          type="button"
+                          onClick={() =>
+                            updateCornerFeedback(selectedCorner.id, {
+                              [textKey]: option,
+                              [valueKey]: balanceValueMap[option],
+                            } as Partial<CornerFeedback>)
+                          }
+                          className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                            active
+                              ? "border-[#E10600] bg-[#E10600] text-white"
+                              : "border-[#2A3441] bg-[#1B2430] text-white hover:border-[#E10600]"
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              ))}
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-white">
