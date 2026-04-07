@@ -13,12 +13,13 @@ type SubmittedCornerFeedback = {
 
 type SubmittedDebrief = {
   id: string;
-  team: string | null;
-  driver_name: string | null;
-  session_name: string | null;
-  track_name: string | null;
+  team?: string | null;
+  driver_name?: string | null;
+  session_name?: string | null;
+  track_name?: string | null;
   created_at?: string | null;
-  corner_feedback: SubmittedCornerFeedback[] | null;
+  corner_feedback?: SubmittedCornerFeedback[] | null;
+  [key: string]: unknown;
 };
 
 type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
@@ -62,8 +63,9 @@ function xForBalance(value: number, left: number, width: number) {
   return left + normalised * width;
 }
 
-function safeText(value: string | null | undefined, fallback = "-") {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+function safeText(value: unknown, fallback = "-") {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
   return trimmed || fallback;
 }
 
@@ -81,6 +83,7 @@ export default function SummaryPage() {
   const [selectedDebriefIds, setSelectedDebriefIds] = useState<string[]>([]);
   const [clearing, setClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [rawSample, setRawSample] = useState<string>("");
 
   async function loadDebriefs() {
     setLoading(true);
@@ -88,25 +91,31 @@ export default function SummaryPage() {
 
     const { data, error } = await supabase
       .from("submitted_debriefs")
-      .select(
-        "id, team, driver_name, session_name, track_name, created_at, corner_feedback"
-      )
+      .select("*")
       .order("created_at", { ascending: false });
 
     if (error) {
       console.error("Error loading debriefs:", error);
       setAllDebriefs([]);
+      setRawSample("");
       setErrorMessage(error.message || "Failed to load submitted debriefs.");
       setLoading(false);
       return;
     }
 
-    const cleaned = ((data ?? []) as SubmittedDebrief[]).map((row) => ({
+    const rows = (data ?? []) as SubmittedDebrief[];
+    console.log("submitted_debriefs rows:", rows);
+
+    setRawSample(JSON.stringify(rows.slice(0, 5), null, 2));
+
+    const cleaned = rows.map((row) => ({
       ...row,
-      team: row.team ?? "",
-      driver_name: row.driver_name ?? "",
-      session_name: row.session_name ?? "",
-      track_name: row.track_name ?? "",
+      id: String(row.id ?? ""),
+      team: typeof row.team === "string" ? row.team : "",
+      driver_name: typeof row.driver_name === "string" ? row.driver_name : "",
+      session_name: typeof row.session_name === "string" ? row.session_name : "",
+      track_name: typeof row.track_name === "string" ? row.track_name : "",
+      created_at: typeof row.created_at === "string" ? row.created_at : "",
       corner_feedback: Array.isArray(row.corner_feedback) ? row.corner_feedback : [],
     }));
 
@@ -120,8 +129,8 @@ export default function SummaryPage() {
 
   const availableTeams = useMemo(() => {
     const teams = allDebriefs
-      .map((d) => safeText(d.team, ""))
-      .filter((team) => team !== "");
+      .map((d) => (typeof d.team === "string" ? d.team.trim() : ""))
+      .filter((team) => team.length > 0);
 
     return Array.from(new Set(teams)).sort((a, b) => a.localeCompare(b));
   }, [allDebriefs]);
@@ -132,18 +141,14 @@ export default function SummaryPage() {
       return;
     }
 
-    if (selectedTeam && availableTeams.includes(selectedTeam)) {
-      return;
+    if (!selectedTeam || !availableTeams.includes(selectedTeam)) {
+      setSelectedTeam(availableTeams[0]);
     }
-
-    setSelectedTeam(availableTeams[0]);
   }, [availableTeams, selectedTeam]);
 
   const teamDebriefs = useMemo(() => {
     if (!selectedTeam) return [];
-    return allDebriefs.filter(
-      (d) => safeText(d.team, "") === selectedTeam
-    );
+    return allDebriefs.filter((d) => (d.team ?? "").trim() === selectedTeam);
   }, [allDebriefs, selectedTeam]);
 
   useEffect(() => {
@@ -205,9 +210,7 @@ export default function SummaryPage() {
 
   function toggleDebriefSelection(id: string) {
     setSelectedDebriefIds((prev) =>
-      prev.includes(id)
-        ? prev.filter((item) => item !== id)
-        : [...prev, id]
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   }
 
@@ -215,7 +218,7 @@ export default function SummaryPage() {
     if (!selectedTeam) return;
 
     const confirmed = window.confirm(
-      `Are you sure you want to permanently delete all submitted debriefs for "${selectedTeam}"?`
+      `Delete all submitted debriefs for "${selectedTeam}"?`
     );
 
     if (!confirmed) return;
@@ -293,9 +296,7 @@ export default function SummaryPage() {
         <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <div className="grid gap-4 md:grid-cols-[1fr_auto_auto_auto]">
             <div>
-              <label className="mb-2 block text-sm font-medium text-white">
-                Team
-              </label>
+              <label className="mb-2 block text-sm font-medium text-white">Team</label>
               <select
                 value={selectedTeam}
                 onChange={(e) => setSelectedTeam(e.target.value)}
@@ -304,16 +305,11 @@ export default function SummaryPage() {
                 {availableTeams.length === 0 ? (
                   <option value="">No teams available</option>
                 ) : (
-                  <>
-                    <option value="" disabled>
-                      Select team
+                  availableTeams.map((team) => (
+                    <option key={team} value={team}>
+                      {team}
                     </option>
-                    {availableTeams.map((team) => (
-                      <option key={team} value={team}>
-                        {team}
-                      </option>
-                    ))}
-                  </>
+                  ))
                 )}
               </select>
             </div>
@@ -343,6 +339,35 @@ export default function SummaryPage() {
             >
               {clearing ? "Clearing..." : "Clear Team Debriefs"}
             </button>
+          </div>
+        </section>
+
+        <section className="print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+          <h2 className="text-xl font-semibold">Debug</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
+              <p className="text-xs text-[#9CA3AF]">Total rows</p>
+              <p className="mt-1 text-2xl font-bold">{allDebriefs.length}</p>
+            </div>
+            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
+              <p className="text-xs text-[#9CA3AF]">Teams found</p>
+              <p className="mt-1 text-2xl font-bold">{availableTeams.length}</p>
+            </div>
+            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
+              <p className="text-xs text-[#9CA3AF]">Selected team</p>
+              <p className="mt-1 text-sm font-bold">{selectedTeam || "None"}</p>
+            </div>
+            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4">
+              <p className="text-xs text-[#9CA3AF]">Rows in selected team</p>
+              <p className="mt-1 text-2xl font-bold">{teamDebriefs.length}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-[#2A3441] bg-[#111827] p-4">
+            <p className="mb-2 text-sm font-semibold text-white">First rows returned from Supabase</p>
+            <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-all text-xs text-[#D1D5DB]">
+              {rawSample || "No data returned"}
+            </pre>
           </div>
         </section>
 
@@ -427,8 +452,7 @@ export default function SummaryPage() {
                       style={{ backgroundColor: colour }}
                     />
                     <span className="text-sm text-white print:text-[#111827]">
-                      {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
-                      {safeText(debrief.session_name, "No Session")}
+                      {safeText(debrief.driver_name, "Unknown Driver")} — {safeText(debrief.session_name, "No Session")}
                     </span>
                   </div>
                 );
@@ -450,39 +474,10 @@ export default function SummaryPage() {
                 <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
                 <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
 
-                <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
-                  Turn
-                </text>
-                <text
-                  x={turnColWidth + phaseColWidth / 2}
-                  y={29}
-                  fontSize="12"
-                  fill="#111827"
-                  fontWeight="700"
-                  textAnchor="middle"
-                >
-                  Phase
-                </text>
-                <text
-                  x={graphLeft + graphWidth / 2}
-                  y={29}
-                  fontSize="12"
-                  fill="#111827"
-                  fontWeight="700"
-                  textAnchor="middle"
-                >
-                  Car Balance
-                </text>
-                <text
-                  x={commentLeft + commentWidth / 2}
-                  y={29}
-                  fontSize="12"
-                  fill="#111827"
-                  fontWeight="700"
-                  textAnchor="middle"
-                >
-                  Comments
-                </text>
+                <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">Turn</text>
+                <text x={turnColWidth + phaseColWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">Phase</text>
+                <text x={graphLeft + graphWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">Car Balance</text>
+                <text x={commentLeft + commentWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">Comments</text>
 
                 {majorScaleLabels.map((item, index) => {
                   const cellWidth = graphWidth / 7;
@@ -498,14 +493,7 @@ export default function SummaryPage() {
                         fill={item.fill}
                         stroke="#111827"
                       />
-                      <text
-                        x={x}
-                        y={13}
-                        fontSize="10"
-                        fill="#111827"
-                        fontWeight="700"
-                        textAnchor="middle"
-                      >
+                      <text x={x} y={13} fontSize="10" fill="#111827" fontWeight="700" textAnchor="middle">
                         {item.label}
                       </text>
                     </g>
@@ -537,14 +525,7 @@ export default function SummaryPage() {
 
                   return (
                     <g key={`corner-${cornerId}`}>
-                      <rect
-                        x={0}
-                        y={blockY}
-                        width={turnColWidth}
-                        height={rowsPerCorner * rowHeight}
-                        fill="#ffffff"
-                        stroke="#111827"
-                      />
+                      <rect x={0} y={blockY} width={turnColWidth} height={rowsPerCorner * rowHeight} fill="#ffffff" stroke="#111827" />
                       <text
                         x={turnColWidth / 2}
                         y={blockY + rowsPerCorner * rowHeight / 2 + 6}
@@ -560,14 +541,7 @@ export default function SummaryPage() {
 
                         return (
                           <g key={`${cornerId}-${phase.label}`}>
-                            <rect
-                              x={turnColWidth}
-                              y={y}
-                              width={phaseColWidth}
-                              height={rowHeight}
-                              fill="#ffffff"
-                              stroke="#111827"
-                            />
+                            <rect x={turnColWidth} y={y} width={phaseColWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
                             <text
                               x={turnColWidth + phaseColWidth / 2}
                               y={y + 18}
@@ -578,23 +552,8 @@ export default function SummaryPage() {
                               {phase.label}
                             </text>
 
-                            <rect
-                              x={graphLeft}
-                              y={y}
-                              width={graphWidth}
-                              height={rowHeight}
-                              fill="#ffffff"
-                              stroke="#111827"
-                            />
-
-                            <rect
-                              x={commentLeft}
-                              y={y}
-                              width={commentWidth}
-                              height={rowHeight}
-                              fill="#ffffff"
-                              stroke="#111827"
-                            />
+                            <rect x={graphLeft} y={y} width={graphWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
+                            <rect x={commentLeft} y={y} width={commentWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
                           </g>
                         );
                       })}
@@ -608,9 +567,7 @@ export default function SummaryPage() {
 
                   Array.from({ length: maxCorner }).forEach((_, cornerIndex) => {
                     const cornerId = cornerIndex + 1;
-                    const feedback = (debrief.corner_feedback ?? []).find(
-                      (c) => c.cornerId === cornerId
-                    );
+                    const feedback = (debrief.corner_feedback ?? []).find((c) => c.cornerId === cornerId);
 
                     phaseRows.forEach((phase, phaseIndex) => {
                       const value = feedback?.[phase.key];
@@ -645,9 +602,7 @@ export default function SummaryPage() {
 
                   return Array.from({ length: maxCorner }).flatMap((_, cornerIndex) => {
                     const cornerId = cornerIndex + 1;
-                    const feedback = (debrief.corner_feedback ?? []).find(
-                      (c) => c.cornerId === cornerId
-                    );
+                    const feedback = (debrief.corner_feedback ?? []).find((c) => c.cornerId === cornerId);
 
                     return phaseRows.map((phase, phaseIndex) => {
                       const value = feedback?.[phase.key];
@@ -678,13 +633,10 @@ export default function SummaryPage() {
                 {commentsByCorner.map((corner) => {
                   if (corner.comments.length === 0) return null;
 
-                  const blockY =
-                    headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
-
-                  const maxCommentLines = 3;
+                  const blockY = headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
                   const lineHeight = 11;
 
-                  return corner.comments.slice(0, maxCommentLines).map((entry, index) => (
+                  return corner.comments.slice(0, 3).map((entry, index) => (
                     <text
                       key={`comment-${corner.cornerId}-${entry.driverName}-${index}`}
                       x={commentLeft + 8}
