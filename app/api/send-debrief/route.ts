@@ -66,6 +66,15 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function slugify(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
 function wrapText(text: string, maxCharsPerLine: number): string[] {
   if (!text?.trim()) return ["-"];
 
@@ -137,6 +146,7 @@ async function buildDebriefPdf(payload: {
   const colors = {
     bg: rgb(0.08, 0.1, 0.13),
     panel: rgb(0.11, 0.14, 0.19),
+    panel2: rgb(0.08, 0.11, 0.16),
     border: rgb(0.19, 0.23, 0.29),
     text: rgb(1, 1, 1),
     muted: rgb(0.65, 0.68, 0.73),
@@ -144,6 +154,7 @@ async function buildDebriefPdf(payload: {
     issue: rgb(0.78, 0.18, 0.18),
     incident: rgb(0.95, 0.8, 0.15),
     black: rgb(0, 0, 0),
+    ok: rgb(0.18, 0.68, 0.35),
   };
 
   function addPage(): PDFPage {
@@ -179,9 +190,28 @@ async function buildDebriefPdf(payload: {
     page.drawText(title, {
       x: x + 14,
       y: y + height - 26,
-      size: 14,
+      size: 13,
       font: bold,
       color: colors.text,
+    });
+  }
+
+  function drawMutedTextBlock(
+    page: PDFPage,
+    lines: string[],
+    x: number,
+    startY: number,
+    lineGap: number,
+    size = 10
+  ) {
+    lines.forEach((line, index) => {
+      page.drawText(line, {
+        x,
+        y: startY - index * lineGap,
+        size,
+        font,
+        color: colors.muted,
+      });
     });
   }
 
@@ -247,7 +277,7 @@ async function buildDebriefPdf(payload: {
     });
   }
 
-  async function drawTrackMapPanel(
+  async function drawTrackMap(
     page: PDFPage,
     x: number,
     y: number,
@@ -257,11 +287,19 @@ async function buildDebriefPdf(payload: {
     corners: Corner[] = [],
     incidentMarkers: IncidentMarker[] = []
   ) {
-    drawPanel(page, x, y, width, height, "Track Map");
+    page.drawRectangle({
+      x,
+      y,
+      width,
+      height,
+      color: colors.panel2,
+      borderColor: colors.border,
+      borderWidth: 1,
+    });
 
     if (!imageUrl) {
       page.drawText("No track map available", {
-        x: x + 14,
+        x: x + 16,
         y: y + height / 2,
         size: 11,
         font,
@@ -284,10 +322,11 @@ async function buildDebriefPdf(payload: {
         image = await pdf.embedJpg(imageBytes);
       }
 
-      const boxX = x + 14;
-      const boxY = y + 14;
-      const boxW = width - 28;
-      const boxH = height - 44;
+      const padding = 16;
+      const boxX = x + padding;
+      const boxY = y + padding;
+      const boxW = width - padding * 2;
+      const boxH = height - padding * 2;
 
       const imgW = image.width;
       const imgH = image.height;
@@ -312,7 +351,7 @@ async function buildDebriefPdf(payload: {
         page.drawCircle({
           x: markerX,
           y: markerY,
-          size: 12,
+          size: 11,
           color: getTurnColor(corner.color),
           borderColor: colors.text,
           borderWidth: 1.5,
@@ -359,7 +398,7 @@ async function buildDebriefPdf(payload: {
       }
     } catch {
       page.drawText("Track map could not be loaded", {
-        x: x + 14,
+        x: x + 16,
         y: y + height / 2,
         size: 11,
         font,
@@ -368,13 +407,59 @@ async function buildDebriefPdf(payload: {
     }
   }
 
+  function drawCornerSummaryCard(
+    page: PDFPage,
+    x: number,
+    y: number,
+    width: number,
+    row: CornerFeedback,
+    cornerMeta?: Corner
+  ) {
+    const rowHeight = 32;
+
+    page.drawRectangle({
+      x,
+      y,
+      width,
+      height: rowHeight,
+      color: colors.panel2,
+      borderColor: colors.border,
+      borderWidth: 1,
+    });
+
+    drawTurnChip(page, x + 8, y + 7, 42, 18, `T${row.cornerId}`, cornerMeta?.color);
+    drawBalanceChip(page, x + 58, y + 7, 50, 18, row.entryBalance || "-", row.entryBalanceValue);
+    drawBalanceChip(page, x + 114, y + 7, 50, 18, row.midBalance || "-", row.midBalanceValue);
+    drawBalanceChip(page, x + 170, y + 7, 50, 18, row.exitBalance || "-", row.exitBalanceValue);
+
+    const comment = row.comment?.trim() ? row.comment.trim() : "-";
+    const commentLines = wrapText(comment, 24).slice(0, 2);
+
+    commentLines.forEach((line, index) => {
+      page.drawText(line, {
+        x: x + 228,
+        y: y + 16 - index * 10,
+        size: 8.5,
+        font,
+        color: colors.muted,
+      });
+    });
+  }
+
+  const cornerLookup = new Map(payload.corners.map((corner) => [corner.id, corner]));
+  const sortedRows = [...payload.cornerFeedback].sort((a, b) => a.cornerId - b.cornerId);
+
+  const activeIssues = Object.entries(payload.reliabilityFlags)
+    .filter(([, value]) => value)
+    .map(([key]) => key);
+
   const page1 = addPage();
 
   page1.drawRectangle({
     x: margin,
-    y: pageHeight - 88,
+    y: pageHeight - 84,
     width: pageWidth - margin * 2,
-    height: 64,
+    height: 58,
     color: colors.panel,
     borderColor: colors.border,
     borderWidth: 1,
@@ -382,138 +467,262 @@ async function buildDebriefPdf(payload: {
 
   page1.drawText("Rodin Motorsport", {
     x: margin + 16,
-    y: pageHeight - 52,
-    size: 11,
+    y: pageHeight - 48,
+    size: 10.5,
     font: bold,
     color: colors.accent,
   });
 
   page1.drawText("Driver Debrief", {
     x: margin + 16,
-    y: pageHeight - 74,
-    size: 24,
-    font: bold,
-    color: colors.text,
-  });
-
-  page1.drawText(payload.trackName || "-", {
-    x: pageWidth - 220,
     y: pageHeight - 68,
-    size: 16,
+    size: 22,
     font: bold,
     color: colors.text,
   });
 
-  drawPanel(page1, margin, pageHeight - 220, 250, 112, "Session Info");
-
-  const infoLines = [
-    `Driver: ${payload.driverName || "-"}`,
-    `Session: ${payload.sessionName || "-"}`,
-    `Track: ${payload.trackName || "-"}`,
-  ];
-
-  infoLines.forEach((line, i) => {
-    page1.drawText(line, {
-      x: margin + 14,
-      y: pageHeight - 154 - i * 20,
-      size: 11,
-      font,
-      color: colors.muted,
-    });
+  const rightHeader = `${payload.trackName || "-"}${payload.sessionName ? ` · ${payload.sessionName}` : ""}`;
+  page1.drawText(rightHeader, {
+    x: pageWidth - 260,
+    y: pageHeight - 60,
+    size: 13,
+    font: bold,
+    color: colors.text,
   });
 
-  drawPanel(page1, 290, pageHeight - 220, pageWidth - 314, 112, "Reliability / Issues");
+  const topPanelY = 392;
+  const topPanelH = 84;
+  const infoW = 250;
+  const issuesW = pageWidth - margin * 2 - infoW - 12;
 
-  const activeIssues = Object.entries(payload.reliabilityFlags)
-    .filter(([, value]) => value)
-    .map(([key]) => key);
-
-  const issueLines = wrapText(
-    activeIssues.length ? activeIssues.join(" • ") : "No issues flagged",
-    70
+  drawPanel(page1, margin, topPanelY, infoW, topPanelH, "Session Info");
+  drawMutedTextBlock(
+    page1,
+    [
+      `Driver: ${payload.driverName || "-"}`,
+      `Session: ${payload.sessionName || "-"}`,
+      `Track: ${payload.trackName || "-"}`,
+    ],
+    margin + 14,
+    topPanelY + topPanelH - 44,
+    16,
+    10
   );
 
-  issueLines.slice(0, 4).forEach((line, i) => {
-    page1.drawText(line, {
-      x: 304,
-      y: pageHeight - 154 - i * 18,
-      size: 11,
-      font,
-      color: activeIssues.length ? colors.issue : colors.muted,
-    });
-  });
-
-  const leftX = margin;
-  const leftW = 380;
-  const rightX = 420;
-  const rightW = pageWidth - rightX - margin;
-
-  drawPanel(page1, leftX, 220, leftW, 120, "Primary Limitation");
-  wrapText(payload.primaryLimitation || "-", 50)
-    .slice(0, 4)
-    .forEach((line, i) => {
-      page1.drawText(line, {
-        x: leftX + 14,
-        y: 294 - i * 18,
-        size: 11,
-        font,
-        color: colors.muted,
-      });
-    });
-
-  drawPanel(page1, leftX, 70, leftW, 120, "Overall Comments");
-  wrapText(payload.overallComments || "-", 50)
-    .slice(0, 4)
-    .forEach((line, i) => {
-      page1.drawText(line, {
-        x: leftX + 14,
-        y: 144 - i * 18,
-        size: 11,
-        font,
-        color: colors.muted,
-      });
-    });
-
-  await drawTrackMapPanel(
+  drawPanel(page1, margin + infoW + 12, topPanelY, issuesW, topPanelH, "Reliability / Issues");
+  drawMutedTextBlock(
     page1,
-    rightX,
-    70,
-    rightW,
-    270,
+    wrapText(activeIssues.length ? activeIssues.join(" • ") : "No issues flagged", 78).slice(0, 3),
+    margin + infoW + 26,
+    topPanelY + topPanelH - 44,
+    16,
+    10
+  );
+
+  const contentY = 132;
+  const contentH = 246;
+  const leftW = 360;
+  const rightX = margin + leftW + 12;
+  const rightW = pageWidth - margin - rightX;
+
+  drawPanel(page1, margin, contentY, leftW, contentH, "Track Map");
+  await drawTrackMap(
+    page1,
+    margin + 10,
+    contentY + 10,
+    leftW - 20,
+    contentH - 34,
     payload.trackMapUrl,
     payload.corners,
     payload.incidentMarkers
   );
 
-  const incidentLines =
-    payload.incidentMarkers.length > 0
-      ? payload.incidentMarkers.flatMap((marker, index) =>
-          wrapText(
-            `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
-            42
-          )
-        )
-      : ["No incident markers added"];
+  drawPanel(page1, rightX, contentY, rightW, contentH, "Corner Balance Summary");
 
-  drawPanel(page1, rightX, 24, rightW, 36, "Incident Notes");
+  page1.drawText("Corner", {
+    x: rightX + 10,
+    y: contentY + contentH - 44,
+    size: 9,
+    font: bold,
+    color: colors.muted,
+  });
+  page1.drawText("Entry", {
+    x: rightX + 62,
+    y: contentY + contentH - 44,
+    size: 9,
+    font: bold,
+    color: colors.muted,
+  });
+  page1.drawText("Mid", {
+    x: rightX + 118,
+    y: contentY + contentH - 44,
+    size: 9,
+    font: bold,
+    color: colors.muted,
+  });
+  page1.drawText("Exit", {
+    x: rightX + 174,
+    y: contentY + contentH - 44,
+    size: 9,
+    font: bold,
+    color: colors.muted,
+  });
+  page1.drawText("Comment", {
+    x: rightX + 230,
+    y: contentY + contentH - 44,
+    size: 9,
+    font: bold,
+    color: colors.muted,
+  });
 
-  incidentLines.slice(0, 2).forEach((line, i) => {
-    page1.drawText(line, {
-      x: rightX + 14,
-      y: 44 - i * 14,
-      size: 9,
+  let summaryY = contentY + contentH - 76;
+  const summaryRowHeight = 38;
+  const firstPageRows = Math.min(sortedRows.length, 5);
+
+  for (let i = 0; i < firstPageRows; i++) {
+    const row = sortedRows[i];
+    const cornerMeta = cornerLookup.get(row.cornerId);
+    drawCornerSummaryCard(page1, rightX + 10, summaryY, rightW - 20, row, cornerMeta);
+    summaryY -= summaryRowHeight;
+  }
+
+  if (sortedRows.length > firstPageRows) {
+    page1.drawText(`+ ${sortedRows.length - firstPageRows} more corners on following page(s)`, {
+      x: rightX + 10,
+      y: contentY + 12,
+      size: 8.5,
       font,
       color: colors.muted,
     });
-  });
+  }
 
-  const cornerLookup = new Map(payload.corners.map((corner) => [corner.id, corner]));
-  const sortedRows = [...payload.cornerFeedback].sort((a, b) => a.cornerId - b.cornerId);
+  const bottomY = 24;
+  const bottomH = 96;
+  const leftBottomW = 392;
+  const rightBottomX = margin + leftBottomW + 12;
+  const rightBottomW = pageWidth - margin - rightBottomX;
+
+  drawPanel(page1, margin, bottomY, leftBottomW, bottomH, "Primary Limitation");
+  drawMutedTextBlock(
+    page1,
+    wrapText(payload.primaryLimitation || "-", 56).slice(0, 4),
+    margin + 14,
+    bottomY + bottomH - 42,
+    14,
+    9.5
+  );
+
+  drawPanel(page1, rightBottomX, bottomY, rightBottomW, bottomH, "Overall Comments");
+  drawMutedTextBlock(
+    page1,
+    wrapText(payload.overallComments || "-", 50).slice(0, 4),
+    rightBottomX + 14,
+    bottomY + bottomH - 42,
+    14,
+    9.5
+  );
+
+  if (payload.incidentMarkers.length > 0) {
+    const incidentPage = addPage();
+    let incidentY = pageHeight - 40;
+
+    incidentPage.drawText("Incident Marker Notes", {
+      x: margin,
+      y: incidentY,
+      size: 18,
+      font: bold,
+      color: colors.text,
+    });
+
+    incidentY -= 30;
+
+    for (let i = 0; i < payload.incidentMarkers.length; i++) {
+      const marker = payload.incidentMarkers[i];
+      const lines = wrapText(marker.note?.trim() ? marker.note.trim() : "No note", 95);
+      const blockHeight = Math.max(34, lines.length * 14 + 16);
+
+      if (incidentY - blockHeight < 30) {
+        incidentY = pageHeight - 40;
+        const newPage = addPage();
+
+        newPage.drawText("Incident Marker Notes", {
+          x: margin,
+          y: incidentY,
+          size: 18,
+          font: bold,
+          color: colors.text,
+        });
+
+        incidentY -= 30;
+
+        newPage.drawRectangle({
+          x: margin,
+          y: incidentY - blockHeight + 8,
+          width: pageWidth - margin * 2,
+          height: blockHeight,
+          color: colors.panel,
+          borderColor: colors.border,
+          borderWidth: 1,
+        });
+
+        newPage.drawText(`H${i + 1}`, {
+          x: margin + 12,
+          y: incidentY - 10,
+          size: 11,
+          font: bold,
+          color: colors.incident,
+        });
+
+        lines.forEach((line, lineIndex) => {
+          newPage.drawText(line, {
+            x: margin + 50,
+            y: incidentY - 10 - lineIndex * 14,
+            size: 10,
+            font,
+            color: colors.muted,
+          });
+        });
+
+        incidentY -= blockHeight + 10;
+        continue;
+      }
+
+      incidentPage.drawRectangle({
+        x: margin,
+        y: incidentY - blockHeight + 8,
+        width: pageWidth - margin * 2,
+        height: blockHeight,
+        color: colors.panel,
+        borderColor: colors.border,
+        borderWidth: 1,
+      });
+
+      incidentPage.drawText(`H${i + 1}`, {
+        x: margin + 12,
+        y: incidentY - 10,
+        size: 11,
+        font: bold,
+        color: colors.incident,
+      });
+
+      lines.forEach((line, lineIndex) => {
+        incidentPage.drawText(line, {
+          x: margin + 50,
+          y: incidentY - 10 - lineIndex * 14,
+          size: 10,
+          font,
+          color: colors.muted,
+        });
+      });
+
+      incidentY -= blockHeight + 10;
+    }
+  }
 
   let currentPage = addPage();
   let cursorY = pageHeight - 40;
 
-  currentPage.drawText("Corner Summary", {
+  currentPage.drawText("Full Corner Summary", {
     x: margin,
     y: cursorY,
     size: 18,
@@ -586,7 +795,7 @@ async function buildDebriefPdf(payload: {
       currentPage = addPage();
       cursorY = pageHeight - 40;
 
-      currentPage.drawText("Corner Summary", {
+      currentPage.drawText("Full Corner Summary", {
         x: margin,
         y: cursorY,
         size: 18,
@@ -621,11 +830,10 @@ async function buildDebriefPdf(payload: {
       cornerMeta?.color
     );
 
-    const chipY = cursorY - 17;
     drawBalanceChip(
       currentPage,
       margin + 66,
-      chipY,
+      cursorY - 17,
       52,
       18,
       row.entryBalance || "-",
@@ -634,7 +842,7 @@ async function buildDebriefPdf(payload: {
     drawBalanceChip(
       currentPage,
       margin + 136,
-      chipY,
+      cursorY - 17,
       52,
       18,
       row.midBalance || "-",
@@ -643,7 +851,7 @@ async function buildDebriefPdf(payload: {
     drawBalanceChip(
       currentPage,
       margin + 206,
-      chipY,
+      cursorY - 17,
       52,
       18,
       row.exitBalance || "-",
@@ -661,72 +869,6 @@ async function buildDebriefPdf(payload: {
     });
 
     cursorY -= rowHeight + 8;
-  }
-
-  if (payload.incidentMarkers.length > 0) {
-    let incidentPage = addPage();
-    let incidentY = pageHeight - 40;
-
-    incidentPage.drawText("Incident Marker Notes", {
-      x: margin,
-      y: incidentY,
-      size: 18,
-      font: bold,
-      color: colors.text,
-    });
-
-    incidentY -= 30;
-
-    for (let i = 0; i < payload.incidentMarkers.length; i++) {
-      const marker = payload.incidentMarkers[i];
-      const lines = wrapText(marker.note?.trim() ? marker.note.trim() : "No note", 95);
-      const blockHeight = Math.max(34, lines.length * 14 + 16);
-
-      if (incidentY - blockHeight < 30) {
-        incidentPage = addPage();
-        incidentY = pageHeight - 40;
-
-        incidentPage.drawText("Incident Marker Notes", {
-          x: margin,
-          y: incidentY,
-          size: 18,
-          font: bold,
-          color: colors.text,
-        });
-
-        incidentY -= 30;
-      }
-
-      incidentPage.drawRectangle({
-        x: margin,
-        y: incidentY - blockHeight + 8,
-        width: pageWidth - margin * 2,
-        height: blockHeight,
-        color: colors.panel,
-        borderColor: colors.border,
-        borderWidth: 1,
-      });
-
-      incidentPage.drawText(`H${i + 1}`, {
-        x: margin + 12,
-        y: incidentY - 10,
-        size: 11,
-        font: bold,
-        color: colors.incident,
-      });
-
-      lines.forEach((line, lineIndex) => {
-        incidentPage.drawText(line, {
-          x: margin + 50,
-          y: incidentY - 10 - lineIndex * 14,
-          size: 10,
-          font,
-          color: colors.muted,
-        });
-      });
-
-      incidentY -= blockHeight + 10;
-    }
   }
 
   const bytes = await pdf.save();
@@ -781,20 +923,18 @@ export async function POST(request: Request) {
     const actualRecipient = "alec.dixon@rodinmotorsport.com";
     const recipientLabel = intendedRecipients.join(" | ");
 
-    const { error: saveError } = await supabase
-      .from("submitted_debriefs")
-      .insert({
-        team: team ?? null,
-        template_id: templateId ?? null,
-        track_name: trackName,
-        session_name: sessionName ?? null,
-        driver_name: driverName,
-        primary_limitation: primaryLimitation ?? null,
-        overall_comments: overallComments ?? null,
-        reliability_flags: reliabilityFlags ?? {},
-        corner_feedback: cornerFeedback ?? [],
-        incident_markers: incidentMarkers ?? [],
-      });
+    const { error: saveError } = await supabase.from("submitted_debriefs").insert({
+      team: team ?? null,
+      template_id: templateId ?? null,
+      track_name: trackName,
+      session_name: sessionName ?? null,
+      driver_name: driverName,
+      primary_limitation: primaryLimitation ?? null,
+      overall_comments: overallComments ?? null,
+      reliability_flags: reliabilityFlags ?? {},
+      corner_feedback: cornerFeedback ?? [],
+      incident_markers: incidentMarkers ?? [],
+    });
 
     if (saveError) {
       return NextResponse.json(
@@ -818,6 +958,11 @@ export async function POST(request: Request) {
 
     const pdfBase64 = pdfBuffer.toString("base64");
 
+    const safeTrack = slugify(trackName || "track");
+    const safeDriver = slugify(driverName || "driver");
+    const safeSession = slugify(sessionName || "session");
+    const attachmentFilename = `${safeTrack}-${safeDriver}-debrief-${safeSession}.pdf`;
+
     const { data, error } = await resend.emails.send({
       from: "Debrief App <onboarding@resend.dev>",
       to: [actualRecipient],
@@ -835,9 +980,7 @@ export async function POST(request: Request) {
       `,
       attachments: [
         {
-          filename: `${trackName}-${driverName}-debrief.pdf`
-            .replace(/\s+/g, "-")
-            .toLowerCase(),
+          filename: attachmentFilename,
           content: pdfBase64,
         },
       ],
@@ -855,6 +998,7 @@ export async function POST(request: Request) {
       data,
       sentTo: actualRecipient,
       intendedRecipients,
+      attachmentFilename,
     });
   } catch (error) {
     console.error("send-debrief route failed:", error);
