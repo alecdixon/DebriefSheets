@@ -894,8 +894,10 @@ export async function POST(request: Request) {
       `,
       attachments: [
         {
-          filename: `${trackName}-${driverName}-debrief.pdf`
-            .replace(/\s+/g, "-")
+          filename: `${new Date().toISOString().split("T")[0]}_${driverName}_${trackName}_DebriefSheet_${sessionName}_${fastestLapTime?.trim() || "NoLap"}.pdf`
+            .replace(/[\/\\:*?"<>|]/g, "-")
+            .replace(/\s+/g, "_")
+            .replace(/\.+/g, ".")
             .toLowerCase(),
           content: pdfBase64,
         },
