@@ -19,7 +19,19 @@ type SubmittedDebrief = {
   track_name?: string | null;
   created_at?: string | null;
   corner_feedback?: SubmittedCornerFeedback[] | null;
+  year?: number | string | null;
   [key: string]: unknown;
+};
+
+type CleanedDebrief = SubmittedDebrief & {
+  id: string;
+  team: string;
+  driver_name: string;
+  session_name: string;
+  track_name: string;
+  created_at: string;
+  corner_feedback: SubmittedCornerFeedback[];
+  derived_year: string;
 };
 
 type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
@@ -76,10 +88,31 @@ function formatDate(dateString?: string | null) {
   return date.toLocaleString();
 }
 
+function deriveYear(row: SubmittedDebrief): string {
+  if (typeof row.year === "number" && Number.isFinite(row.year)) {
+    return String(row.year);
+  }
+
+  if (typeof row.year === "string" && row.year.trim()) {
+    return row.year.trim();
+  }
+
+  if (typeof row.created_at === "string" && row.created_at.trim()) {
+    const date = new Date(row.created_at);
+    if (!Number.isNaN(date.getTime())) {
+      return String(date.getFullYear());
+    }
+  }
+
+  return "";
+}
+
 export default function SummaryPage() {
-  const [allDebriefs, setAllDebriefs] = useState<SubmittedDebrief[]>([]);
+  const [allDebriefs, setAllDebriefs] = useState<CleanedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTeam, setSelectedTeam] = useState("");
+  const [selectedTeam, setSelectedTeam] = useState("All");
+  const [selectedYear, setSelectedYear] = useState("All");
+  const [selectedCircuit, setSelectedCircuit] = useState("All");
   const [selectedDebriefIds, setSelectedDebriefIds] = useState<string[]>([]);
   const [clearing, setClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -106,15 +139,16 @@ export default function SummaryPage() {
 
     const rows = (data ?? []) as SubmittedDebrief[];
 
-    const cleaned = rows.map((row) => ({
+    const cleaned: CleanedDebrief[] = rows.map((row) => ({
       ...row,
       id: String(row.id ?? ""),
-      team: typeof row.team === "string" ? row.team : "",
-      driver_name: typeof row.driver_name === "string" ? row.driver_name : "",
-      session_name: typeof row.session_name === "string" ? row.session_name : "",
-      track_name: typeof row.track_name === "string" ? row.track_name : "",
+      team: typeof row.team === "string" ? row.team.trim() : "",
+      driver_name: typeof row.driver_name === "string" ? row.driver_name.trim() : "",
+      session_name: typeof row.session_name === "string" ? row.session_name.trim() : "",
+      track_name: typeof row.track_name === "string" ? row.track_name.trim() : "",
       created_at: typeof row.created_at === "string" ? row.created_at : "",
       corner_feedback: Array.isArray(row.corner_feedback) ? row.corner_feedback : [],
+      derived_year: deriveYear(row),
     }));
 
     setAllDebriefs(cleaned);
@@ -127,39 +161,61 @@ export default function SummaryPage() {
 
   const availableTeams = useMemo(() => {
     const teams = allDebriefs
-      .map((d) => (typeof d.team === "string" ? d.team.trim() : ""))
+      .map((d) => d.team)
       .filter((team) => team.length > 0);
 
-    return Array.from(new Set(teams)).sort((a, b) => a.localeCompare(b));
+    return ["All", ...Array.from(new Set(teams)).sort((a, b) => a.localeCompare(b))];
+  }, [allDebriefs]);
+
+  const availableYears = useMemo(() => {
+    const years = allDebriefs
+      .map((d) => d.derived_year)
+      .filter((year) => year.length > 0);
+
+    return ["All", ...Array.from(new Set(years)).sort((a, b) => b.localeCompare(a))];
+  }, [allDebriefs]);
+
+  const availableCircuits = useMemo(() => {
+    const circuits = allDebriefs
+      .map((d) => d.track_name)
+      .filter((track) => track.length > 0);
+
+    return ["All", ...Array.from(new Set(circuits)).sort((a, b) => a.localeCompare(b))];
   }, [allDebriefs]);
 
   useEffect(() => {
-    if (availableTeams.length === 0) {
-      setSelectedTeam("");
-      return;
-    }
-
-    if (!selectedTeam || !availableTeams.includes(selectedTeam)) {
-      setSelectedTeam(availableTeams[0]);
-    }
+    if (!availableTeams.includes(selectedTeam)) setSelectedTeam("All");
   }, [availableTeams, selectedTeam]);
 
-  const teamDebriefs = useMemo(() => {
-    if (!selectedTeam) return [];
-    return allDebriefs.filter((d) => (d.team ?? "").trim() === selectedTeam);
-  }, [allDebriefs, selectedTeam]);
+  useEffect(() => {
+    if (!availableYears.includes(selectedYear)) setSelectedYear("All");
+  }, [availableYears, selectedYear]);
+
+  useEffect(() => {
+    if (!availableCircuits.includes(selectedCircuit)) setSelectedCircuit("All");
+  }, [availableCircuits, selectedCircuit]);
+
+  const filteredDebriefs = useMemo(() => {
+    return allDebriefs.filter((d) => {
+      const matchesTeam = selectedTeam === "All" || d.team === selectedTeam;
+      const matchesYear = selectedYear === "All" || d.derived_year === selectedYear;
+      const matchesCircuit = selectedCircuit === "All" || d.track_name === selectedCircuit;
+
+      return matchesTeam && matchesYear && matchesCircuit;
+    });
+  }, [allDebriefs, selectedTeam, selectedYear, selectedCircuit]);
 
   useEffect(() => {
     setSelectedDebriefIds((prev) =>
-      prev.filter((id) => teamDebriefs.some((d) => d.id === id))
+      prev.filter((id) => filteredDebriefs.some((d) => d.id === id))
     );
-  }, [teamDebriefs]);
+  }, [filteredDebriefs]);
 
   const selectedDebriefs = useMemo(() => {
     return selectedDebriefIds
-      .map((id) => teamDebriefs.find((d) => d.id === id))
-      .filter((d): d is SubmittedDebrief => Boolean(d));
-  }, [selectedDebriefIds, teamDebriefs]);
+      .map((id) => filteredDebriefs.find((d) => d.id === id))
+      .filter((d): d is CleanedDebrief => Boolean(d));
+  }, [selectedDebriefIds, filteredDebriefs]);
 
   const maxCorner = useMemo(() => {
     if (selectedDebriefs.length === 0) return 0;
@@ -212,31 +268,53 @@ export default function SummaryPage() {
     );
   }
 
-  async function handleClearTeamDebriefs() {
-    if (!selectedTeam) return;
+  function toggleSelectAllVisible() {
+    const visibleIds = filteredDebriefs.map((d) => d.id);
+    const allVisibleSelected =
+      visibleIds.length > 0 && visibleIds.every((id) => selectedDebriefIds.includes(id));
 
-    const confirmed = window.confirm(
-      `Delete all submitted debriefs for "${selectedTeam}"?`
-    );
+    if (allVisibleSelected) {
+      setSelectedDebriefIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+      return;
+    }
 
+    setSelectedDebriefIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+  }
+
+  async function handleClearFilteredDebriefs() {
+    if (filteredDebriefs.length === 0) return;
+
+    const filterSummary = [
+      selectedTeam !== "All" ? `Team: ${selectedTeam}` : null,
+      selectedYear !== "All" ? `Year: ${selectedYear}` : null,
+      selectedCircuit !== "All" ? `Circuit: ${selectedCircuit}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    const label = filterSummary || "all currently filtered debriefs";
+
+    const confirmed = window.confirm(`Delete ${label}?`);
     if (!confirmed) return;
 
     setClearing(true);
     setErrorMessage("");
 
+    const idsToDelete = filteredDebriefs.map((d) => d.id);
+
     const { error } = await supabase
       .from("submitted_debriefs")
       .delete()
-      .eq("team", selectedTeam);
+      .in("id", idsToDelete);
 
     if (error) {
-      console.error("Error clearing team debriefs:", error);
-      setErrorMessage(error.message || "Failed to clear team debriefs.");
+      console.error("Error clearing filtered debriefs:", error);
+      setErrorMessage(error.message || "Failed to clear filtered debriefs.");
       setClearing(false);
       return;
     }
 
-    setSelectedDebriefIds([]);
+    setSelectedDebriefIds((prev) => prev.filter((id) => !idsToDelete.includes(id)));
     await loadDebriefs();
     setClearing(false);
   }
@@ -251,8 +329,8 @@ export default function SummaryPage() {
     const contentWidth = printable.scrollWidth;
     const contentHeight = printable.scrollHeight;
 
-    const pageWidthPx = 1122; // approximate A4 landscape printable width at 96dpi
-    const pageHeightPx = 760; // approximate A4 landscape printable height with margins
+    const pageWidthPx = 1122;
+    const pageHeightPx = 760;
 
     const scaleX = pageWidthPx / contentWidth;
     const scaleY = pageHeightPx / contentHeight;
@@ -286,6 +364,10 @@ export default function SummaryPage() {
   const graphWidth = 430;
   const commentLeft = graphLeft + graphWidth;
   const commentWidth = svgWidth - commentLeft;
+
+  const allVisibleSelected =
+    filteredDebriefs.length > 0 &&
+    filteredDebriefs.every((d) => selectedDebriefIds.includes(d.id));
 
   return (
     <main className="min-h-screen bg-[#0A0E14] px-4 py-6 text-white md:px-8 md:py-8 print:bg-white print:px-0 print:py-0 print:text-black">
@@ -332,9 +414,14 @@ export default function SummaryPage() {
       `}</style>
 
       <div className="print-root mx-auto max-w-[1700px] space-y-6">
+        {errorMessage ? (
+          <section className="print-hide rounded-2xl border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+            {errorMessage}
+          </section>
+        ) : null}
 
         <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
-          <div className="grid gap-4 md:grid-cols-[1fr_auto_auto_auto]">
+          <div className="grid gap-4 md:grid-cols-5">
             <div>
               <label className="mb-2 block text-sm font-medium text-white">Team</label>
               <select
@@ -342,15 +429,41 @@ export default function SummaryPage() {
                 onChange={(e) => setSelectedTeam(e.target.value)}
                 className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
               >
-                {availableTeams.length === 0 ? (
-                  <option value="">No teams available</option>
-                ) : (
-                  availableTeams.map((team) => (
-                    <option key={team} value={team}>
-                      {team}
-                    </option>
-                  ))
-                )}
+                {availableTeams.map((team) => (
+                  <option key={team} value={team}>
+                    {team === "All" ? "All Teams" : team}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-white">Year</label>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
+              >
+                {availableYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year === "All" ? "All Years" : year}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-white">Circuit</label>
+              <select
+                value={selectedCircuit}
+                onChange={(e) => setSelectedCircuit(e.target.value)}
+                className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
+              >
+                {availableCircuits.map((circuit) => (
+                  <option key={circuit} value={circuit}>
+                    {circuit === "All" ? "All Circuits" : circuit}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -370,14 +483,25 @@ export default function SummaryPage() {
             >
               Print / Save PDF
             </button>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleClearFilteredDebriefs}
+              disabled={filteredDebriefs.length === 0 || clearing}
+              className="rounded-2xl border border-[#7f1d1d] bg-[#7f1d1d]/20 px-5 py-3 text-sm font-semibold text-red-200 transition hover:bg-[#7f1d1d]/35 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {clearing ? "Clearing..." : "Clear Filtered Debriefs"}
+            </button>
 
             <button
               type="button"
-              onClick={handleClearTeamDebriefs}
-              disabled={!selectedTeam || clearing || teamDebriefs.length === 0}
-              className="self-end rounded-2xl border border-[#7f1d1d] bg-[#7f1d1d]/20 px-5 py-3 text-sm font-semibold text-red-200 transition hover:bg-[#7f1d1d]/35 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={toggleSelectAllVisible}
+              disabled={filteredDebriefs.length === 0}
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#243041] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {clearing ? "Clearing..." : "Clear Team Debriefs"}
+              {allVisibleSelected ? "Deselect All Visible" : "Select All Visible"}
             </button>
           </div>
         </section>
@@ -385,35 +509,34 @@ export default function SummaryPage() {
         <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
           <h2 className="text-2xl font-semibold text-white">Submitted Debriefs</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
-            All submitted debrief sheets for the selected team.
+            Debriefs matching the selected team, year, and circuit filters.
           </p>
 
           {loading ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">Loading submitted debriefs...</p>
-          ) : !selectedTeam ? (
-            <p className="mt-5 text-sm text-[#9CA3AF]">No team selected.</p>
-          ) : teamDebriefs.length === 0 ? (
+          ) : filteredDebriefs.length === 0 ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">
-              No submitted debriefs found for this team.
+              No submitted debriefs found for the current filters.
             </p>
           ) : (
             <div className="mt-5 overflow-hidden rounded-2xl border border-[#2A3441]">
-              <div className="grid grid-cols-[60px_1.2fr_1fr_1fr_1fr] gap-3 bg-[#111827] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
+              <div className="grid grid-cols-[60px_1fr_1fr_1fr_120px_160px] gap-3 bg-[#111827] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
                 <div>Select</div>
                 <div>Driver</div>
                 <div>Session</div>
                 <div>Track</div>
+                <div>Year</div>
                 <div>Submitted</div>
               </div>
 
               <div className="divide-y divide-[#2A3441]">
-                {teamDebriefs.map((debrief) => {
+                {filteredDebriefs.map((debrief) => {
                   const checked = selectedDebriefIds.includes(debrief.id);
 
                   return (
                     <label
                       key={debrief.id}
-                      className="grid cursor-pointer grid-cols-[60px_1.2fr_1fr_1fr_1fr] gap-3 bg-[#1B2430] px-4 py-4 transition hover:bg-[#243041]"
+                      className="grid cursor-pointer grid-cols-[60px_1fr_1fr_1fr_120px_160px] gap-3 bg-[#1B2430] px-4 py-4 transition hover:bg-[#243041]"
                     >
                       <div className="flex items-center">
                         <input
@@ -434,6 +557,10 @@ export default function SummaryPage() {
 
                       <div className="text-sm text-[#D1D5DB]">
                         {safeText(debrief.track_name, "-")}
+                      </div>
+
+                      <div className="text-sm text-[#D1D5DB]">
+                        {debrief.derived_year || "-"}
                       </div>
 
                       <div className="text-sm text-[#9CA3AF]">
@@ -473,7 +600,8 @@ export default function SummaryPage() {
                         />
                         <span className="text-sm text-white print:text-[#111827]">
                           {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
-                          {safeText(debrief.session_name, "No Session")}
+                          {safeText(debrief.session_name, "No Session")} —{" "}
+                          {safeText(debrief.track_name, "-")}
                         </span>
                       </div>
                     );
@@ -495,14 +623,37 @@ export default function SummaryPage() {
                     <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
                     <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
 
-                    <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">Turn</text>
-                    <text x={turnColWidth + phaseColWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                    <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
+                      Turn
+                    </text>
+                    <text
+                      x={turnColWidth + phaseColWidth / 2}
+                      y={29}
+                      fontSize="12"
+                      fill="#111827"
+                      fontWeight="700"
+                      textAnchor="middle"
+                    >
                       Phase
                     </text>
-                    <text x={graphLeft + graphWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                    <text
+                      x={graphLeft + graphWidth / 2}
+                      y={29}
+                      fontSize="12"
+                      fill="#111827"
+                      fontWeight="700"
+                      textAnchor="middle"
+                    >
                       Car Balance
                     </text>
-                    <text x={commentLeft + commentWidth / 2} y={29} fontSize="12" fill="#111827" fontWeight="700" textAnchor="middle">
+                    <text
+                      x={commentLeft + commentWidth / 2}
+                      y={29}
+                      fontSize="12"
+                      fill="#111827"
+                      fontWeight="700"
+                      textAnchor="middle"
+                    >
                       Comments
                     </text>
 
@@ -520,7 +671,14 @@ export default function SummaryPage() {
                             fill={item.fill}
                             stroke="#111827"
                           />
-                          <text x={x} y={13} fontSize="10" fill="#111827" fontWeight="700" textAnchor="middle">
+                          <text
+                            x={x}
+                            y={13}
+                            fontSize="10"
+                            fill="#111827"
+                            fontWeight="700"
+                            textAnchor="middle"
+                          >
                             {item.label}
                           </text>
                         </g>
@@ -562,7 +720,7 @@ export default function SummaryPage() {
                           />
                           <text
                             x={turnColWidth / 2}
-                            y={blockY + rowsPerCorner * rowHeight / 2 + 6}
+                            y={blockY + (rowsPerCorner * rowHeight) / 2 + 6}
                             fontSize="24"
                             fill="#111827"
                             textAnchor="middle"
@@ -575,7 +733,14 @@ export default function SummaryPage() {
 
                             return (
                               <g key={`${cornerId}-${phase.label}`}>
-                                <rect x={turnColWidth} y={y} width={phaseColWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
+                                <rect
+                                  x={turnColWidth}
+                                  y={y}
+                                  width={phaseColWidth}
+                                  height={rowHeight}
+                                  fill="#ffffff"
+                                  stroke="#111827"
+                                />
                                 <text
                                   x={turnColWidth + phaseColWidth / 2}
                                   y={y + 18}
@@ -586,8 +751,22 @@ export default function SummaryPage() {
                                   {phase.label}
                                 </text>
 
-                                <rect x={graphLeft} y={y} width={graphWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
-                                <rect x={commentLeft} y={y} width={commentWidth} height={rowHeight} fill="#ffffff" stroke="#111827" />
+                                <rect
+                                  x={graphLeft}
+                                  y={y}
+                                  width={graphWidth}
+                                  height={rowHeight}
+                                  fill="#ffffff"
+                                  stroke="#111827"
+                                />
+                                <rect
+                                  x={commentLeft}
+                                  y={y}
+                                  width={commentWidth}
+                                  height={rowHeight}
+                                  fill="#ffffff"
+                                  stroke="#111827"
+                                />
                               </g>
                             );
                           })}
