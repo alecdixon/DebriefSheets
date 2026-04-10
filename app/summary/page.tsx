@@ -75,6 +75,13 @@ function xForBalance(value: number, left: number, width: number) {
   return left + normalised * width;
 }
 
+function xForDelta(value: number, left: number, width: number, maxAbs: number) {
+  const safeMax = Math.max(0.1, maxAbs);
+  const clamped = clamp(value, -safeMax, safeMax);
+  const normalised = (clamped + safeMax) / (2 * safeMax);
+  return left + normalised * width;
+}
+
 function safeText(value: unknown, fallback = "-") {
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
@@ -118,6 +125,11 @@ export default function SummaryPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [printScale, setPrintScale] = useState(1);
 
+  const [baselineDebriefId, setBaselineDebriefId] = useState<string>("");
+  const [manualCornerDeltas, setManualCornerDeltas] = useState<
+    Record<string, Record<number, string>>
+  >({});
+
   const printContentRef = useRef<HTMLDivElement | null>(null);
 
   async function loadDebriefs() {
@@ -160,10 +172,7 @@ export default function SummaryPage() {
   }, []);
 
   const availableTeams = useMemo(() => {
-    const teams = allDebriefs
-      .map((d) => d.team)
-      .filter((team) => team.length > 0);
-
+    const teams = allDebriefs.map((d) => d.team).filter((team) => team.length > 0);
     return ["All", ...Array.from(new Set(teams)).sort((a, b) => a.localeCompare(b))];
   }, [allDebriefs]);
 
@@ -200,7 +209,6 @@ export default function SummaryPage() {
       const matchesTeam = selectedTeam === "All" || d.team === selectedTeam;
       const matchesYear = selectedYear === "All" || d.derived_year === selectedYear;
       const matchesCircuit = selectedCircuit === "All" || d.track_name === selectedCircuit;
-
       return matchesTeam && matchesYear && matchesCircuit;
     });
   }, [allDebriefs, selectedTeam, selectedYear, selectedCircuit]);
@@ -216,6 +224,18 @@ export default function SummaryPage() {
       .map((id) => filteredDebriefs.find((d) => d.id === id))
       .filter((d): d is CleanedDebrief => Boolean(d));
   }, [selectedDebriefIds, filteredDebriefs]);
+
+  useEffect(() => {
+    if (selectedDebriefs.length === 0) {
+      setBaselineDebriefId("");
+      return;
+    }
+
+    const stillExists = selectedDebriefs.some((d) => d.id === baselineDebriefId);
+    if (!stillExists) {
+      setBaselineDebriefId(selectedDebriefs[0].id);
+    }
+  }, [selectedDebriefs, baselineDebriefId]);
 
   const maxCorner = useMemo(() => {
     if (selectedDebriefs.length === 0) return 0;
@@ -261,6 +281,44 @@ export default function SummaryPage() {
       return { cornerId, comments };
     });
   }, [selectedDebriefs, maxCorner]);
+
+  const baselineDebrief = useMemo(() => {
+    return selectedDebriefs.find((d) => d.id === baselineDebriefId) ?? null;
+  }, [selectedDebriefs, baselineDebriefId]);
+
+  const comparisonDebriefs = useMemo(() => {
+    return selectedDebriefs.filter((d) => d.id !== baselineDebriefId);
+  }, [selectedDebriefs, baselineDebriefId]);
+
+  const maxDeltaMagnitude = useMemo(() => {
+    const values: number[] = [];
+
+    comparisonDebriefs.forEach((debrief) => {
+      for (let cornerId = 1; cornerId <= maxCorner; cornerId += 1) {
+        const raw = manualCornerDeltas[debrief.id]?.[cornerId] ?? "";
+        const parsed = Number(raw);
+        if (!Number.isNaN(parsed)) {
+          values.push(Math.abs(parsed));
+        }
+      }
+    });
+
+    return Math.max(1, ...values);
+  }, [comparisonDebriefs, maxCorner, manualCornerDeltas]);
+
+  function updateManualCornerDelta(debriefId: string, cornerId: number, value: string) {
+    setManualCornerDeltas((prev) => ({
+      ...prev,
+      [debriefId]: {
+        ...(prev[debriefId] ?? {}),
+        [cornerId]: value,
+      },
+    }));
+  }
+
+  function getManualCornerDelta(debriefId: string, cornerId: number) {
+    return manualCornerDeltas[debriefId]?.[cornerId] ?? "";
+  }
 
   function toggleDebriefSelection(id: string) {
     setSelectedDebriefIds((prev) =>
@@ -365,6 +423,18 @@ export default function SummaryPage() {
   const commentLeft = graphLeft + graphWidth;
   const commentWidth = svgWidth - commentLeft;
 
+  const deltaSvgWidth = 1500;
+  const deltaHeaderHeight = 46;
+  const deltaRowHeight = 34;
+  const deltaBodyHeight = Math.max(maxCorner * deltaRowHeight, 140);
+  const deltaSvgHeight = deltaHeaderHeight + deltaBodyHeight + 2;
+
+  const deltaTurnColWidth = 70;
+  const deltaGraphLeft = deltaTurnColWidth;
+  const deltaGraphWidth = 760;
+  const deltaInfoLeft = deltaGraphLeft + deltaGraphWidth;
+  const deltaInfoWidth = deltaSvgWidth - deltaInfoLeft;
+
   const allVisibleSelected =
     filteredDebriefs.length > 0 &&
     filteredDebriefs.every((d) => selectedDebriefIds.includes(d.id));
@@ -407,6 +477,11 @@ export default function SummaryPage() {
             width: 100%;
             height: 100%;
             overflow: hidden !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          .print-avoid-break {
             page-break-inside: avoid !important;
             break-inside: avoid !important;
           }
@@ -582,8 +657,8 @@ export default function SummaryPage() {
             width: printScale < 1 ? `${100 / printScale}%` : "100%",
           }}
         >
-          <div ref={printContentRef}>
-            <section className="print-shell rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+          <div ref={printContentRef} className="space-y-6">
+            <section className="print-shell print-avoid-break rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
               <div className="flex flex-wrap items-center gap-6">
                 {selectedDebriefs.length === 0 ? (
                   <p className="text-sm text-[#9CA3AF] print:text-[#374151]">
@@ -618,10 +693,38 @@ export default function SummaryPage() {
                   >
                     <rect x={0} y={0} width={svgWidth} height={svgHeight} fill="#f3f4f6" />
 
-                    <rect x={0} y={0} width={turnColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                    <rect x={turnColWidth} y={0} width={phaseColWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                    <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
-                    <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill="#d1d5db" stroke="#111827" />
+                    <rect
+                      x={0}
+                      y={0}
+                      width={turnColWidth}
+                      height={headerHeight}
+                      fill="#d1d5db"
+                      stroke="#111827"
+                    />
+                    <rect
+                      x={turnColWidth}
+                      y={0}
+                      width={phaseColWidth}
+                      height={headerHeight}
+                      fill="#d1d5db"
+                      stroke="#111827"
+                    />
+                    <rect
+                      x={graphLeft}
+                      y={0}
+                      width={graphWidth}
+                      height={headerHeight}
+                      fill="#d1d5db"
+                      stroke="#111827"
+                    />
+                    <rect
+                      x={commentLeft}
+                      y={0}
+                      width={commentWidth}
+                      height={headerHeight}
+                      fill="#d1d5db"
+                      stroke="#111827"
+                    />
 
                     <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
                       Turn
@@ -850,7 +953,8 @@ export default function SummaryPage() {
                     {commentsByCorner.map((corner) => {
                       if (corner.comments.length === 0) return null;
 
-                      const blockY = headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
+                      const blockY =
+                        headerHeight + (corner.cornerId - 1) * rowsPerCorner * rowHeight;
                       const lineHeight = 11;
 
                       return corner.comments.slice(0, 3).map((entry, index) => (
@@ -871,6 +975,408 @@ export default function SummaryPage() {
                   </svg>
                 </div>
               </div>
+            </section>
+
+            <section className="print-shell print-hide rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+              <h2 className="text-2xl font-semibold text-white">Corner Delta Input</h2>
+              <p className="mt-2 text-sm text-[#9CA3AF]">
+                Choose one selected debrief as the baseline, then manually enter a per-corner
+                delta for each of the other selected cars.
+              </p>
+
+              {selectedDebriefs.length < 2 ? (
+                <p className="mt-5 text-sm text-[#9CA3AF]">
+                  Select at least 2 debriefs to use the corner delta tool.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-5 max-w-xl">
+                    <label className="mb-2 block text-sm font-medium text-white">
+                      Baseline Debrief
+                    </label>
+                    <select
+                      value={baselineDebriefId}
+                      onChange={(e) => setBaselineDebriefId(e.target.value)}
+                      className="w-full rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white outline-none"
+                    >
+                      {selectedDebriefs.map((debrief) => (
+                        <option key={debrief.id} value={debrief.id}>
+                          {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
+                          {safeText(debrief.session_name, "No Session")} —{" "}
+                          {safeText(debrief.track_name, "-")}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-6 space-y-6">
+                    {comparisonDebriefs.map((debrief) => {
+                      const selectedIndex = selectedDebriefs.findIndex(
+                        (item) => item.id === debrief.id
+                      );
+                      const colour = lineColours[selectedIndex % lineColours.length];
+
+                      return (
+                        <div
+                          key={debrief.id}
+                          className="rounded-2xl border border-[#2A3441] bg-[#111827] p-4"
+                        >
+                          <div className="mb-4 flex flex-wrap items-center gap-3">
+                            <span
+                              className="inline-block h-3 w-3 rounded-full"
+                              style={{ backgroundColor: colour }}
+                            />
+                            <span className="text-sm font-semibold text-white">
+                              {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
+                              {safeText(debrief.session_name, "No Session")} —{" "}
+                              {safeText(debrief.track_name, "-")}
+                            </span>
+                            <span className="text-sm text-[#9CA3AF]">
+                              vs baseline{" "}
+                              {baselineDebrief
+                                ? safeText(baselineDebrief.driver_name, "Unknown Driver")
+                                : "-"}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+                            {Array.from({ length: maxCorner }).map((_, cornerIndex) => {
+                              const cornerId = cornerIndex + 1;
+
+                              return (
+                                <div key={`${debrief.id}-corner-${cornerId}`}>
+                                  <label className="mb-1 block text-xs font-medium text-[#9CA3AF]">
+                                    T{cornerId}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={getManualCornerDelta(debrief.id, cornerId)}
+                                    onChange={(e) =>
+                                      updateManualCornerDelta(
+                                        debrief.id,
+                                        cornerId,
+                                        e.target.value
+                                      )
+                                    }
+                                    className="w-full rounded-xl border border-[#2A3441] bg-[#1B2430] px-3 py-2 text-sm text-white outline-none"
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section className="print-shell print-avoid-break rounded-[28px] border border-[#2A3441] bg-[#141A22] p-6 shadow-2xl">
+              <h2 className="text-2xl font-semibold text-white">Corner Delta Plot</h2>
+              <p className="mt-2 text-sm text-[#9CA3AF]">
+                Manual corner delta values for each non-baseline car relative to the chosen
+                baseline.
+              </p>
+
+              {selectedDebriefs.length < 2 ? (
+                <p className="mt-5 text-sm text-[#9CA3AF]">
+                  Select at least 2 debriefs to display the corner delta plot.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-4 flex flex-wrap items-center gap-6">
+                    {baselineDebrief ? (
+                      <div className="text-sm font-semibold text-white print:text-[#111827]">
+                        Baseline: {safeText(baselineDebrief.driver_name, "Unknown Driver")} —{" "}
+                        {safeText(baselineDebrief.session_name, "No Session")} —{" "}
+                        {safeText(baselineDebrief.track_name, "-")}
+                      </div>
+                    ) : null}
+
+                    {comparisonDebriefs.map((debrief) => {
+                      const selectedIndex = selectedDebriefs.findIndex(
+                        (item) => item.id === debrief.id
+                      );
+                      const colour = lineColours[selectedIndex % lineColours.length];
+
+                      return (
+                        <div key={debrief.id} className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-3 w-3 rounded-full"
+                            style={{ backgroundColor: colour }}
+                          />
+                          <span className="text-sm text-white print:text-[#111827]">
+                            {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
+                            {safeText(debrief.session_name, "No Session")}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-6 overflow-x-auto print:overflow-visible">
+                    <div className="min-w-[1500px] rounded-2xl border border-[#2A3441] bg-[#111827] print:min-w-0 print:border-[#d1d5db] print:bg-white">
+                      <svg
+                        viewBox={`0 0 ${deltaSvgWidth} ${deltaSvgHeight}`}
+                        className="h-auto w-full"
+                        preserveAspectRatio="xMinYMin meet"
+                      >
+                        <rect
+                          x={0}
+                          y={0}
+                          width={deltaSvgWidth}
+                          height={deltaSvgHeight}
+                          fill="#f3f4f6"
+                        />
+
+                        <rect
+                          x={0}
+                          y={0}
+                          width={deltaTurnColWidth}
+                          height={deltaHeaderHeight}
+                          fill="#d1d5db"
+                          stroke="#111827"
+                        />
+                        <rect
+                          x={deltaGraphLeft}
+                          y={0}
+                          width={deltaGraphWidth}
+                          height={deltaHeaderHeight}
+                          fill="#d1d5db"
+                          stroke="#111827"
+                        />
+                        <rect
+                          x={deltaInfoLeft}
+                          y={0}
+                          width={deltaInfoWidth}
+                          height={deltaHeaderHeight}
+                          fill="#d1d5db"
+                          stroke="#111827"
+                        />
+
+                        <text x={16} y={29} fontSize="12" fill="#111827" fontWeight="700">
+                          Turn
+                        </text>
+
+                        <text
+                          x={deltaGraphLeft + deltaGraphWidth / 2}
+                          y={29}
+                          fontSize="12"
+                          fill="#111827"
+                          fontWeight="700"
+                          textAnchor="middle"
+                        >
+                          Corner Delta
+                        </text>
+
+                        <text
+                          x={deltaInfoLeft + deltaInfoWidth / 2}
+                          y={29}
+                          fontSize="12"
+                          fill="#111827"
+                          fontWeight="700"
+                          textAnchor="middle"
+                        >
+                          Values
+                        </text>
+
+                        {Array.from({ length: 9 }, (_, i) => {
+                          const value = -maxDeltaMagnitude + (i * (maxDeltaMagnitude * 2)) / 8;
+                          const x = xForDelta(
+                            value,
+                            deltaGraphLeft,
+                            deltaGraphWidth,
+                            maxDeltaMagnitude
+                          );
+                          const isZero = Math.abs(value) < 0.0001;
+
+                          return (
+                            <g key={`delta-grid-${i}`}>
+                              <line
+                                x1={x}
+                                x2={x}
+                                y1={deltaHeaderHeight}
+                                y2={deltaSvgHeight}
+                                stroke={isZero ? "#111827" : "#6b7280"}
+                                strokeDasharray={isZero ? "0" : "4 4"}
+                                strokeWidth={isZero ? 1.2 : 0.7}
+                              />
+                              <text
+                                x={x}
+                                y={14}
+                                fontSize="10"
+                                fill="#111827"
+                                fontWeight="700"
+                                textAnchor="middle"
+                              >
+                                {value.toFixed(1)}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {Array.from({ length: maxCorner }).map((_, cornerIndex) => {
+                          const cornerId = cornerIndex + 1;
+                          const y = deltaHeaderHeight + cornerIndex * deltaRowHeight;
+
+                          return (
+                            <g key={`delta-row-${cornerId}`}>
+                              <rect
+                                x={0}
+                                y={y}
+                                width={deltaTurnColWidth}
+                                height={deltaRowHeight}
+                                fill="#ffffff"
+                                stroke="#111827"
+                              />
+                              <rect
+                                x={deltaGraphLeft}
+                                y={y}
+                                width={deltaGraphWidth}
+                                height={deltaRowHeight}
+                                fill="#ffffff"
+                                stroke="#111827"
+                              />
+                              <rect
+                                x={deltaInfoLeft}
+                                y={y}
+                                width={deltaInfoWidth}
+                                height={deltaRowHeight}
+                                fill="#ffffff"
+                                stroke="#111827"
+                              />
+
+                              <text
+                                x={deltaTurnColWidth / 2}
+                                y={y + 22}
+                                fontSize="15"
+                                fill="#111827"
+                                textAnchor="middle"
+                                fontWeight="700"
+                              >
+                                {cornerId}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {comparisonDebriefs.map((debrief) => {
+                          const selectedIndex = selectedDebriefs.findIndex(
+                            (item) => item.id === debrief.id
+                          );
+                          const colour = lineColours[selectedIndex % lineColours.length];
+                          const points: string[] = [];
+
+                          Array.from({ length: maxCorner }).forEach((_, cornerIndex) => {
+                            const cornerId = cornerIndex + 1;
+                            const raw = getManualCornerDelta(debrief.id, cornerId);
+                            const value = Number(raw);
+
+                            if (Number.isNaN(value)) return;
+
+                            const x = xForDelta(
+                              value,
+                              deltaGraphLeft,
+                              deltaGraphWidth,
+                              maxDeltaMagnitude
+                            );
+                            const y =
+                              deltaHeaderHeight +
+                              cornerIndex * deltaRowHeight +
+                              deltaRowHeight / 2;
+
+                            points.push(`${x},${y}`);
+                          });
+
+                          if (points.length < 2) return null;
+
+                          return (
+                            <polyline
+                              key={`delta-line-${debrief.id}`}
+                              fill="none"
+                              stroke={colour}
+                              strokeWidth="2.5"
+                              points={points.join(" ")}
+                            />
+                          );
+                        })}
+
+                        {comparisonDebriefs.map((debrief) => {
+                          const selectedIndex = selectedDebriefs.findIndex(
+                            (item) => item.id === debrief.id
+                          );
+                          const colour = lineColours[selectedIndex % lineColours.length];
+
+                          return Array.from({ length: maxCorner }).map((_, cornerIndex) => {
+                            const cornerId = cornerIndex + 1;
+                            const raw = getManualCornerDelta(debrief.id, cornerId);
+                            const value = Number(raw);
+
+                            if (Number.isNaN(value)) return null;
+
+                            const x = xForDelta(
+                              value,
+                              deltaGraphLeft,
+                              deltaGraphWidth,
+                              maxDeltaMagnitude
+                            );
+                            const y =
+                              deltaHeaderHeight +
+                              cornerIndex * deltaRowHeight +
+                              deltaRowHeight / 2;
+
+                            return (
+                              <circle
+                                key={`delta-point-${debrief.id}-${cornerId}`}
+                                cx={x}
+                                cy={y}
+                                r={4}
+                                fill={colour}
+                                stroke="#111827"
+                                strokeWidth={0.8}
+                              />
+                            );
+                          });
+                        })}
+
+                        {Array.from({ length: maxCorner }).map((_, cornerIndex) => {
+                          const cornerId = cornerIndex + 1;
+                          const y = deltaHeaderHeight + cornerIndex * deltaRowHeight + 22;
+
+                          const entries = comparisonDebriefs
+                            .map((debrief) => {
+                              const raw = getManualCornerDelta(debrief.id, cornerId);
+                              const value = Number(raw);
+                              if (Number.isNaN(value)) return null;
+
+                              return `${safeText(debrief.driver_name, "Driver")}: ${value.toFixed(
+                                2
+                              )}`;
+                            })
+                            .filter((entry): entry is string => Boolean(entry));
+
+                          if (entries.length === 0) return null;
+
+                          return (
+                            <text
+                              key={`delta-values-${cornerId}`}
+                              x={deltaInfoLeft + 8}
+                              y={y}
+                              fontSize="11"
+                              fill="#111827"
+                            >
+                              {entries.join("   |   ")}
+                            </text>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  </div>
+                </>
+              )}
             </section>
           </div>
         </div>
