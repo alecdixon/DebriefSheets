@@ -33,6 +33,7 @@ type IncidentMarker = {
 type RequestBody = {
   driverName: string;
   sessionName: string;
+  fastestLapTime?: string | null;
   trackName: string;
   trackMapUrl?: string | null;
   corners?: Corner[];
@@ -117,6 +118,7 @@ function getTurnColor(color?: TurnColor) {
 async function buildDebriefPdf(payload: {
   driverName: string;
   sessionName: string;
+  fastestLapTime?: string | null;
   trackName: string;
   trackMapUrl?: string | null;
   corners: Corner[];
@@ -206,11 +208,11 @@ async function buildDebriefPdf(payload: {
       borderWidth: 0.8,
     });
 
-    const textWidth = bold.widthOfTextAtSize(label, 8.5);
+    const textWidth = bold.widthOfTextAtSize(label, 7.8);
     page.drawText(label, {
       x: x + (width - textWidth) / 2,
-      y: y + height / 2 - 3.5,
-      size: 8.5,
+      y: y + height / 2 - 3,
+      size: 7.8,
       font: bold,
       color: colors.text,
     });
@@ -237,11 +239,11 @@ async function buildDebriefPdf(payload: {
       borderWidth: 0.8,
     });
 
-    const textWidth = bold.widthOfTextAtSize(label, 8.5);
+    const textWidth = bold.widthOfTextAtSize(label, 7.8);
     page.drawText(label, {
       x: x + (width - textWidth) / 2,
-      y: y + height / 2 - 3.5,
-      size: 8.5,
+      y: y + height / 2 - 3,
+      size: 7.8,
       font: bold,
       color: colors.text,
     });
@@ -255,9 +257,10 @@ async function buildDebriefPdf(payload: {
     height: number,
     imageUrl?: string | null,
     corners: Corner[] = [],
-    incidentMarkers: IncidentMarker[] = []
+    incidentMarkers: IncidentMarker[] = [],
+    title = "Track Map"
   ) {
-    drawPanel(page, x, y, width, height, "Track Map");
+    drawPanel(page, x, y, width, height, title);
 
     if (!imageUrl) {
       page.drawText("No track map available", {
@@ -309,17 +312,19 @@ async function buildDebriefPdf(payload: {
         const markerX = drawX + (corner.x / 100) * drawW;
         const markerY = drawY + drawH - (corner.y / 100) * drawH;
 
+        const markerRadius = width < 230 ? 9 : 12;
+
         page.drawCircle({
           x: markerX,
           y: markerY,
-          size: 12,
+          size: markerRadius,
           color: getTurnColor(corner.color),
           borderColor: colors.text,
-          borderWidth: 1.5,
+          borderWidth: 1.3,
         });
 
         const label = String(corner.id);
-        const fontSize = label.length >= 2 ? 8 : 9;
+        const fontSize = width < 230 ? (label.length >= 2 ? 6.5 : 7.5) : label.length >= 2 ? 8 : 9;
         const textWidth = bold.widthOfTextAtSize(label, fontSize);
 
         page.drawText(label, {
@@ -336,17 +341,19 @@ async function buildDebriefPdf(payload: {
         const markerX = drawX + (marker.x / 100) * drawW;
         const markerY = drawY + drawH - (marker.y / 100) * drawH;
 
+        const markerRadius = width < 230 ? 6 : 8;
+
         page.drawCircle({
           x: markerX,
           y: markerY,
-          size: 8,
+          size: markerRadius,
           color: colors.incident,
           borderColor: colors.black,
           borderWidth: 1,
         });
 
         const label = `H${i + 1}`;
-        const fontSize = 6.5;
+        const fontSize = width < 230 ? 5.5 : 6.5;
         const textWidth = bold.widthOfTextAtSize(label, fontSize);
 
         page.drawText(label, {
@@ -410,13 +417,14 @@ async function buildDebriefPdf(payload: {
     `Driver: ${payload.driverName || "-"}`,
     `Session: ${payload.sessionName || "-"}`,
     `Track: ${payload.trackName || "-"}`,
+    `Fastest lap: ${payload.fastestLapTime?.trim() ? payload.fastestLapTime.trim() : "-"}`,
   ];
 
   infoLines.forEach((line, i) => {
     page1.drawText(line, {
       x: margin + 14,
-      y: pageHeight - 154 - i * 20,
-      size: 11,
+      y: pageHeight - 154 - i * 18,
+      size: 10.5,
       font,
       color: colors.muted,
     });
@@ -510,24 +518,78 @@ async function buildDebriefPdf(payload: {
   const cornerLookup = new Map(payload.corners.map((corner) => [corner.id, corner]));
   const sortedRows = [...payload.cornerFeedback].sort((a, b) => a.cornerId - b.cornerId);
 
-  let currentPage = addPage();
-  let cursorY = pageHeight - 40;
+  async function startCornerSummaryPage() {
+    const page = addPage();
 
-  currentPage.drawText("Corner Summary", {
-    x: margin,
-    y: cursorY,
-    size: 18,
-    font: bold,
-    color: colors.text,
-  });
-
-  cursorY -= 28;
-
-  function drawTableHeader(page: PDFPage, y: number) {
-    page.drawRectangle({
+    const titleY = pageHeight - 40;
+    page.drawText("Corner Summary", {
       x: margin,
+      y: titleY,
+      size: 18,
+      font: bold,
+      color: colors.text,
+    });
+
+    const tableX = margin;
+    const tableW = 560;
+    const mapGap = 18;
+    const mapX = tableX + tableW + mapGap;
+    const mapW = pageWidth - margin - mapX;
+    const mapY = 150;
+    const mapH = 380;
+
+    await drawTrackMapPanel(
+      page,
+      mapX,
+      mapY,
+      mapW,
+      mapH,
+      payload.trackMapUrl,
+      payload.corners,
+      payload.incidentMarkers,
+      "Track Map"
+    );
+
+    const notesY = 24;
+    const notesH = 112;
+
+    drawPanel(page, mapX, notesY, mapW, notesH, "Incident Notes");
+
+    const rightIncidentLines =
+      payload.incidentMarkers.length > 0
+        ? payload.incidentMarkers.flatMap((marker, index) =>
+            wrapText(
+              `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
+              24
+            )
+          )
+        : ["No incident markers added"];
+
+    rightIncidentLines.slice(0, 6).forEach((line, i) => {
+      page.drawText(line, {
+        x: mapX + 14,
+        y: notesY + notesH - 44 - i * 13,
+        size: 8.5,
+        font,
+        color: colors.muted,
+      });
+    });
+
+    return {
+      page,
+      tableX,
+      tableW,
+      mapX,
+      mapW,
+      cursorY: pageHeight - 68,
+    };
+  }
+
+  function drawTableHeader(page: PDFPage, tableX: number, tableW: number, y: number) {
+    page.drawRectangle({
+      x: tableX,
       y: y - 16,
-      width: pageWidth - margin * 2,
+      width: tableW,
       height: 24,
       color: colors.panel,
       borderColor: colors.border,
@@ -535,74 +597,64 @@ async function buildDebriefPdf(payload: {
     });
 
     page.drawText("Corner", {
-      x: margin + 10,
+      x: tableX + 8,
       y: y - 8,
-      size: 10,
+      size: 9,
       font: bold,
       color: colors.muted,
     });
 
     page.drawText("Entry", {
-      x: margin + 75,
+      x: tableX + 58,
       y: y - 8,
-      size: 10,
+      size: 9,
       font: bold,
       color: colors.muted,
     });
 
     page.drawText("Mid", {
-      x: margin + 145,
+      x: tableX + 118,
       y: y - 8,
-      size: 10,
+      size: 9,
       font: bold,
       color: colors.muted,
     });
 
     page.drawText("Exit", {
-      x: margin + 215,
+      x: tableX + 178,
       y: y - 8,
-      size: 10,
+      size: 9,
       font: bold,
       color: colors.muted,
     });
 
     page.drawText("Comment", {
-      x: margin + 290,
+      x: tableX + 242,
       y: y - 8,
-      size: 10,
+      size: 9,
       font: bold,
       color: colors.muted,
     });
   }
 
-  drawTableHeader(currentPage, cursorY);
-  cursorY -= 30;
+  let summaryLayout = await startCornerSummaryPage();
+  drawTableHeader(summaryLayout.page, summaryLayout.tableX, summaryLayout.tableW, summaryLayout.cursorY);
+  summaryLayout.cursorY -= 28;
 
   for (const row of sortedRows) {
-    const commentLines = wrapText(row.comment || "-", 55);
-    const rowHeight = Math.max(28, commentLines.length * 14 + 12);
+    const commentLines = wrapText(row.comment || "-", 38);
+    const rowHeight = Math.max(24, commentLines.length * 12 + 10);
 
-    if (cursorY - rowHeight < 30) {
-      currentPage = addPage();
-      cursorY = pageHeight - 40;
-
-      currentPage.drawText("Corner Summary", {
-        x: margin,
-        y: cursorY,
-        size: 18,
-        font: bold,
-        color: colors.text,
-      });
-
-      cursorY -= 28;
-      drawTableHeader(currentPage, cursorY);
-      cursorY -= 30;
+    if (summaryLayout.cursorY - rowHeight < 34) {
+      summaryLayout = await startCornerSummaryPage();
+      drawTableHeader(summaryLayout.page, summaryLayout.tableX, summaryLayout.tableW, summaryLayout.cursorY);
+      summaryLayout.cursorY -= 28;
     }
 
-    currentPage.drawRectangle({
-      x: margin,
-      y: cursorY - rowHeight + 8,
-      width: pageWidth - margin * 2,
+    summaryLayout.page.drawRectangle({
+      x: summaryLayout.tableX,
+      y: summaryLayout.cursorY - rowHeight + 8,
+      width: summaryLayout.tableW,
       height: rowHeight,
       color: colors.panel,
       borderColor: colors.border,
@@ -611,56 +663,59 @@ async function buildDebriefPdf(payload: {
 
     const cornerMeta = cornerLookup.get(row.cornerId);
 
+    const chipY = summaryLayout.cursorY - 15;
+
     drawTurnChip(
-      currentPage,
-      margin + 8,
-      cursorY - 17,
-      42,
-      18,
+      summaryLayout.page,
+      summaryLayout.tableX + 8,
+      chipY,
+      36,
+      16,
       `T${row.cornerId}`,
       cornerMeta?.color
     );
 
-    const chipY = cursorY - 17;
     drawBalanceChip(
-      currentPage,
-      margin + 66,
+      summaryLayout.page,
+      summaryLayout.tableX + 54,
       chipY,
-      52,
-      18,
+      46,
+      16,
       row.entryBalance || "-",
       row.entryBalanceValue
     );
+
     drawBalanceChip(
-      currentPage,
-      margin + 136,
+      summaryLayout.page,
+      summaryLayout.tableX + 114,
       chipY,
-      52,
-      18,
+      46,
+      16,
       row.midBalance || "-",
       row.midBalanceValue
     );
+
     drawBalanceChip(
-      currentPage,
-      margin + 206,
+      summaryLayout.page,
+      summaryLayout.tableX + 174,
       chipY,
-      52,
-      18,
+      46,
+      16,
       row.exitBalance || "-",
       row.exitBalanceValue
     );
 
     commentLines.forEach((line, i) => {
-      currentPage.drawText(line, {
-        x: margin + 290,
-        y: cursorY - 10 - i * 14,
-        size: 10,
+      summaryLayout.page.drawText(line, {
+        x: summaryLayout.tableX + 242,
+        y: summaryLayout.cursorY - 9 - i * 12,
+        size: 9,
         font,
         color: colors.muted,
       });
     });
 
-    cursorY -= rowHeight + 8;
+    summaryLayout.cursorY -= rowHeight + 6;
   }
 
   if (payload.incidentMarkers.length > 0) {
@@ -750,6 +805,7 @@ export async function POST(request: Request) {
     const {
       driverName,
       sessionName,
+      fastestLapTime,
       trackName,
       trackMapUrl,
       corners,
@@ -788,6 +844,7 @@ export async function POST(request: Request) {
         template_id: templateId ?? null,
         track_name: trackName,
         session_name: sessionName ?? null,
+        fastest_lap_time: fastestLapTime?.trim() ? fastestLapTime.trim() : null,
         driver_name: driverName,
         primary_limitation: primaryLimitation ?? null,
         overall_comments: overallComments ?? null,
@@ -806,6 +863,7 @@ export async function POST(request: Request) {
     const pdfBuffer = await buildDebriefPdf({
       driverName,
       sessionName,
+      fastestLapTime,
       trackName,
       trackMapUrl,
       corners: corners ?? [],
@@ -830,6 +888,7 @@ export async function POST(request: Request) {
           <p><strong>Track:</strong> ${trackName}</p>
           <p><strong>Driver:</strong> ${driverName}</p>
           <p><strong>Session:</strong> ${sessionName || "Not provided"}</p>
+          <p><strong>Fastest lap:</strong> ${fastestLapTime?.trim() ? fastestLapTime.trim() : "Not provided"}</p>
           <p>The completed debrief PDF is attached.</p>
         </div>
       `,

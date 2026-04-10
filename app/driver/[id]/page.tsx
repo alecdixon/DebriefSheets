@@ -110,29 +110,6 @@ function getErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
-function normaliseApiError(value: unknown): string {
-  if (typeof value === "string") return value;
-
-  if (value instanceof Error) return value.message;
-
-  if (typeof value === "object" && value !== null) {
-    const maybeMessage =
-      "message" in value && typeof (value as { message?: unknown }).message === "string"
-        ? (value as { message: string }).message
-        : null;
-
-    if (maybeMessage) return maybeMessage;
-
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return "Unknown server error object";
-    }
-  }
-
-  return String(value);
-}
-
 function isValidCornerArray(value: unknown): value is Corner[] {
   return (
     Array.isArray(value) &&
@@ -199,6 +176,7 @@ export default function DriverTemplatePage() {
 
   const [driverName, setDriverName] = useState("");
   const [sessionName, setSessionName] = useState("");
+  const [fastestLapTime, setFastestLapTime] = useState("");
   const [overallComments, setOverallComments] = useState("");
   const [primaryLimitation, setPrimaryLimitation] = useState("");
 
@@ -375,108 +353,108 @@ export default function DriverTemplatePage() {
   }
 
   async function handleSendPdf() {
-  if (!template) {
-    setSendStatus("No template loaded.");
-    return;
-  }
-
-  if (!driverName.trim()) {
-    setSendStatus("Please enter the driver name.");
-    return;
-  }
-
-  if (!sessionName.trim()) {
-    setSendStatus("Please enter the session.");
-    return;
-  }
-
-  if (!primaryRecipient) {
-    setSendStatus("Please select a primary recipient.");
-    return;
-  }
-
-  if (recipientErrorMessage) {
-    setSendStatus(recipientErrorMessage);
-    return;
-  }
-
-  try {
-    setSending(true);
-    setSendStatus("Sending email...");
-
-    const payload = {
-      team: template.team,
-      templateId: template.id,
-      driverName: driverName.trim(),
-      sessionName: sessionName.trim(),
-      trackName: template.track_name,
-      trackMapUrl: template.track_map_url,
-      corners: template.corners,
-      primaryRecipientEmail: primaryRecipient.email,
-      extraRecipientEmail: extraRecipient?.email ?? null,
-      primaryLimitation: primaryLimitation.trim(),
-      overallComments: overallComments.trim(),
-      reliabilityFlags,
-      cornerFeedback: cornerFeedback.map((entry) => ({
-        cornerId: entry.cornerId,
-        entryBalance: balanceValueToLabel(entry.entryBalanceValue),
-        midBalance: balanceValueToLabel(entry.midBalanceValue),
-        exitBalance: balanceValueToLabel(entry.exitBalanceValue),
-        entryBalanceValue: entry.entryBalanceValue,
-        midBalanceValue: entry.midBalanceValue,
-        exitBalanceValue: entry.exitBalanceValue,
-        comment: entry.comment.trim(),
-      })),
-      incidentMarkers,
-    };
-
-    const response = await fetch("/api/send-debrief", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const text = await response.text();
-
-    let parsed: unknown = text;
-    try {
-      parsed = text ? JSON.parse(text) : null;
-    } catch {
-      parsed = text;
-    }
-
-    if (!response.ok) {
-      let message = `Server returned ${response.status}`;
-
-      if (typeof parsed === "string" && parsed.trim()) {
-        message = parsed;
-      } else if (parsed && typeof parsed === "object") {
-        const obj = parsed as Record<string, unknown>;
-
-        if (typeof obj.error === "string") {
-          message = obj.error;
-        } else if (typeof obj.message === "string") {
-          message = obj.message;
-        } else {
-          message = JSON.stringify(obj, null, 2);
-        }
-      }
-
-      setSendStatus(`Send failed (${response.status}): ${message}`);
+    if (!template) {
+      setSendStatus("No template loaded.");
       return;
     }
 
-    setSendStatus("Email sent successfully.");
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : JSON.stringify(error, null, 2);
-    setSendStatus(`Send failed: ${message}`);
-  } finally {
-    setSending(false);
+    if (!driverName.trim()) {
+      setSendStatus("Please enter the driver name.");
+      return;
+    }
+
+    if (!sessionName.trim()) {
+      setSendStatus("Please enter the session.");
+      return;
+    }
+
+    if (!primaryRecipient) {
+      setSendStatus("Please select a primary recipient.");
+      return;
+    }
+
+    if (recipientErrorMessage) {
+      setSendStatus(recipientErrorMessage);
+      return;
+    }
+
+    try {
+      setSending(true);
+      setSendStatus("Sending email...");
+
+      const payload = {
+        team: template.team,
+        templateId: template.id,
+        driverName: driverName.trim(),
+        sessionName: sessionName.trim(),
+        fastestLapTime: fastestLapTime.trim() || null,
+        trackName: template.track_name,
+        trackMapUrl: template.track_map_url,
+        corners: template.corners,
+        primaryRecipientEmail: primaryRecipient.email,
+        extraRecipientEmail: extraRecipient?.email ?? null,
+        primaryLimitation: primaryLimitation.trim(),
+        overallComments: overallComments.trim(),
+        reliabilityFlags,
+        cornerFeedback: cornerFeedback.map((entry) => ({
+          cornerId: entry.cornerId,
+          entryBalance: balanceValueToLabel(entry.entryBalanceValue),
+          midBalance: balanceValueToLabel(entry.midBalanceValue),
+          exitBalance: balanceValueToLabel(entry.exitBalanceValue),
+          entryBalanceValue: entry.entryBalanceValue,
+          midBalanceValue: entry.midBalanceValue,
+          exitBalanceValue: entry.exitBalanceValue,
+          comment: entry.comment.trim(),
+        })),
+        incidentMarkers,
+      };
+
+      const response = await fetch("/api/send-debrief", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const text = await response.text();
+
+      let parsed: unknown = text;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = text;
+      }
+
+      if (!response.ok) {
+        let message = `Server returned ${response.status}`;
+
+        if (typeof parsed === "string" && parsed.trim()) {
+          message = parsed;
+        } else if (parsed && typeof parsed === "object") {
+          const obj = parsed as Record<string, unknown>;
+
+          if (typeof obj.error === "string") {
+            message = obj.error;
+          } else if (typeof obj.message === "string") {
+            message = obj.message;
+          } else {
+            message = JSON.stringify(obj, null, 2);
+          }
+        }
+
+        setSendStatus(`Send failed (${response.status}): ${message}`);
+        return;
+      }
+
+      setSendStatus("Email sent successfully.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
+      setSendStatus(`Send failed: ${message}`);
+    } finally {
+      setSending(false);
+    }
   }
-}
 
   if (loading) {
     return (
@@ -514,18 +492,26 @@ export default function DriverTemplatePage() {
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <input
               className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
               placeholder="Driver name"
               value={driverName}
               onChange={(e) => setDriverName(e.target.value)}
             />
+
             <input
               className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
               placeholder="Session"
               value={sessionName}
               onChange={(e) => setSessionName(e.target.value)}
+            />
+
+            <input
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-white placeholder:text-slate-500 outline-none"
+              placeholder="Fastest lap time (optional)"
+              value={fastestLapTime}
+              onChange={(e) => setFastestLapTime(e.target.value)}
             />
           </div>
         </section>
@@ -909,7 +895,7 @@ export default function DriverTemplatePage() {
             </button>
 
             {sendStatus && (
-              <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF] whitespace-pre-wrap break-words">
+              <div className="whitespace-pre-wrap break-words rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
                 {sendStatus}
               </div>
             )}
