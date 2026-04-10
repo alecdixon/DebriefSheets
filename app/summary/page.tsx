@@ -42,6 +42,18 @@ const phaseRows: { key: PhaseKey; label: string }[] = [
   { key: "exitBalanceValue", label: "Exit" },
 ];
 
+const plotTheme = {
+  background: "#0F172A",      // slate-900
+  panel: "#1E293B",           // slate-800
+  row: "#111827",             // gray-900
+  header: "#334155",          // slate-700
+  gridMajor: "#475569",       // slate-600
+  gridMinor: "#334155",       // slate-700
+  textPrimary: "#F8FAFC",     // slate-50
+  textSecondary: "#CBD5E1",   // slate-300
+  border: "#475569",
+};
+
 const graphPalette = [
   "#60A5FA", // blue
   "#34D399", // emerald
@@ -52,6 +64,12 @@ const graphPalette = [
   "#F87171", // red
   "#84CC16", // lime
 ];
+
+const [driverColours, setDriverColours] = useState<Record<string, string>>({});
+
+function getDriverColour(id: string, index: number) {
+  return driverColours[id] || graphPalette[index % graphPalette.length];
+}
 
 const driverColumnStyles = [
   {
@@ -733,14 +751,20 @@ export default function SummaryPage() {
                     className="h-auto w-full"
                     preserveAspectRatio="xMinYMin meet"
                   >
-                    <rect x={0} y={0} width={svgWidth} height={svgHeight} fill="#F3F4F6" />
+                    <rect
+                      x={0}
+                      y={0}
+                      width={svgWidth}
+                      height={svgHeight}
+                      fill={plotTheme.background}
+                    />
 
                     <rect
                       x={0}
                       y={0}
                       width={turnColWidth}
                       height={headerHeight}
-                      fill="#D1D5DB"
+                      fill={plotTheme.header}
                       stroke="#111827"
                     />
                     <rect
@@ -748,7 +772,7 @@ export default function SummaryPage() {
                       y={0}
                       width={phaseColWidth}
                       height={headerHeight}
-                      fill="#D1D5DB"
+                      fill={plotTheme.header}
                       stroke="#111827"
                     />
                     <rect
@@ -756,7 +780,7 @@ export default function SummaryPage() {
                       y={0}
                       width={graphWidth}
                       height={headerHeight}
-                      fill="#D1D5DB"
+                      fill={plotTheme.header}
                       stroke="#111827"
                     />
                     <rect
@@ -764,18 +788,18 @@ export default function SummaryPage() {
                       y={0}
                       width={commentWidth}
                       height={headerHeight}
-                      fill="#D1D5DB"
+                      fill={plotTheme.header}
                       stroke="#111827"
                     />
 
-                    <text x={12} y={29} fontSize="12" fill="#111827" fontWeight="700">
+                    <text x={12} y={29} fontSize="12" fill={plotTheme.textPrimary} fontWeight="700">
                       Turn
                     </text>
                     <text
                       x={turnColWidth + phaseColWidth / 2}
                       y={29}
                       fontSize="12"
-                      fill="#111827"
+                      fill={plotTheme.textPrimary}
                       fontWeight="700"
                       textAnchor="middle"
                     >
@@ -785,7 +809,7 @@ export default function SummaryPage() {
                       x={graphLeft + graphWidth / 2}
                       y={29}
                       fontSize="12"
-                      fill="#111827"
+                      fill={plotTheme.textPrimary}
                       fontWeight="700"
                       textAnchor="middle"
                     >
@@ -795,7 +819,7 @@ export default function SummaryPage() {
                       x={commentLeft + commentWidth / 2}
                       y={29}
                       fontSize="12"
-                      fill="#111827"
+                      fill={plotTheme.textPrimary}
                       fontWeight="700"
                       textAnchor="middle"
                     >
@@ -820,7 +844,7 @@ export default function SummaryPage() {
                             x={x}
                             y={13}
                             fontSize="10"
-                            fill="#111827"
+                            fill={plotTheme.textSecondary}
                             fontWeight="700"
                             textAnchor="middle"
                           >
@@ -842,7 +866,7 @@ export default function SummaryPage() {
                           x2={x}
                           y1={headerHeight}
                           y2={svgHeight}
-                          stroke="#6B7280"
+                          stroke={isMajor ? plotTheme.gridMajor : plotTheme.gridMinor}
                           strokeDasharray={isMajor ? "0" : "4 4"}
                           strokeWidth={isMajor ? 1.1 : 0.7}
                         />
@@ -860,14 +884,14 @@ export default function SummaryPage() {
                             y={blockY}
                             width={turnColWidth}
                             height={rowsPerCorner * rowHeight}
-                            fill="#FFFFFF"
+                            fill={plotTheme.row}
                             stroke="#111827"
                           />
                           <text
                             x={turnColWidth / 2}
                             y={blockY + (rowsPerCorner * rowHeight) / 2 + 6}
                             fontSize="24"
-                            fill="#111827"
+                            fill={plotTheme.textPrimary}
                             textAnchor="middle"
                           >
                             {cornerId}
@@ -883,14 +907,14 @@ export default function SummaryPage() {
                                   y={y}
                                   width={phaseColWidth}
                                   height={rowHeight}
-                                  fill="#FFFFFF"
+                                  fill={plotTheme.row}
                                   stroke="#111827"
                                 />
                                 <text
                                   x={turnColWidth + phaseColWidth / 2}
                                   y={y + 18}
                                   fontSize="11"
-                                  fill="#111827"
+                                  fill={plotTheme.textSecondary}
                                   textAnchor="middle"
                                 >
                                   {phase.label}
@@ -901,7 +925,7 @@ export default function SummaryPage() {
                                   y={y}
                                   width={graphWidth}
                                   height={rowHeight}
-                                  fill="#FFFFFF"
+                                  fill={plotTheme.row}
                                   stroke="#111827"
                                 />
                                 <rect
@@ -909,7 +933,7 @@ export default function SummaryPage() {
                                   y={y}
                                   width={commentWidth}
                                   height={rowHeight}
-                                  fill="#FFFFFF"
+                                  fill={plotTheme.row}
                                   stroke="#111827"
                                 />
                               </g>
@@ -1005,7 +1029,7 @@ export default function SummaryPage() {
                           x={commentLeft + 8}
                           y={blockY + 16 + index * lineHeight}
                           fontSize="10"
-                          fill="#111827"
+                          fill={plotTheme.textSecondary}
                         >
                           <tspan fontWeight="700">
                             {entry.driverName} ({entry.sessionName}):
@@ -1139,7 +1163,7 @@ export default function SummaryPage() {
                     ) : null}
 
                     {selectedDebriefs.map((debrief, index) => {
-                      const colour = graphPalette[index % graphPalette.length];
+                      const colour = getDriverColour(debrief.id, index);
                       return (
                         <div key={debrief.id} className="flex items-center gap-2">
                           <span
@@ -1155,6 +1179,29 @@ export default function SummaryPage() {
                       );
                     })}
                   </div>
+
+                      <div key={debrief.id} className="flex items-center gap-3">
+  <input
+    type="color"
+    value={colour}
+    onChange={(e) =>
+      setDriverColours((prev) => ({
+        ...prev,
+        [debrief.id]: e.target.value,
+      }))
+    }
+    className="h-8 w-8 cursor-pointer rounded border border-[#2A3441] bg-transparent"
+  />
+
+  <span
+    className="inline-block h-3 w-3 rounded-full"
+    style={{ backgroundColor: colour }}
+  />
+
+  <span className="text-sm text-white">
+    {safeText(debrief.driver_name)} — {safeText(debrief.session_name)}
+  </span>
+</div>
 
                   <div className="mt-6 overflow-x-auto print:overflow-visible">
                     <div className="min-w-[1900px] rounded-2xl border border-[#2A3441] bg-[#111827] print:min-w-0 print:border-[#d1d5db] print:bg-white">
@@ -1176,7 +1223,7 @@ export default function SummaryPage() {
                           y={0}
                           width={deltaTurnColWidth}
                           height={deltaHeaderHeight}
-                          fill="#D1D5DB"
+                          fill={plotTheme.header}
                           stroke="#111827"
                         />
                         <rect
@@ -1184,11 +1231,11 @@ export default function SummaryPage() {
                           y={0}
                           width={deltaGraphWidth}
                           height={deltaHeaderHeight}
-                          fill="#D1D5DB"
+                          fill={plotTheme.header}
                           stroke="#111827"
                         />
 
-                        <text x={16} y={38} fontSize="12" fill="#111827" fontWeight="700">
+                        <text x={16} y={38} fontSize="12" fill={plotTheme.textPrimary} fontWeight="700">
                           Turn
                         </text>
 
@@ -1196,7 +1243,7 @@ export default function SummaryPage() {
                           x={deltaGraphLeft + deltaGraphWidth / 2}
                           y={20}
                           fontSize="12"
-                          fill="#111827"
+                          fill={plotTheme.textPrimary}
                           fontWeight="700"
                           textAnchor="middle"
                         >
@@ -1228,7 +1275,7 @@ export default function SummaryPage() {
                                 x={x}
                                 y={42}
                                 fontSize="10"
-                                fill="#111827"
+                                fill={plotTheme.textSecondary}
                                 fontWeight="700"
                                 textAnchor="middle"
                               >
@@ -1285,7 +1332,7 @@ export default function SummaryPage() {
                                 x={x + deltaMetricColWidth / 2}
                                 y={50}
                                 fontSize="10"
-                                fill="#111827"
+                                fill={plotTheme.textSecondary}
                                 fontWeight="700"
                                 textAnchor="middle"
                               >
@@ -1296,7 +1343,7 @@ export default function SummaryPage() {
                                 x={x + deltaMetricColWidth + deltaMetricColWidth / 2}
                                 y={50}
                                 fontSize="10"
-                                fill="#111827"
+                                fill={plotTheme.textSecondary}
                                 fontWeight="700"
                                 textAnchor="middle"
                               >
@@ -1317,7 +1364,7 @@ export default function SummaryPage() {
                                 y={y}
                                 width={deltaTurnColWidth}
                                 height={deltaRowHeight}
-                                fill="#FFFFFF"
+                                fill={plotTheme.row}
                                 stroke="#111827"
                               />
                               <rect
@@ -1325,7 +1372,7 @@ export default function SummaryPage() {
                                 y={y}
                                 width={deltaGraphWidth}
                                 height={deltaRowHeight}
-                                fill="#FFFFFF"
+                                fill={plotTheme.row}
                                 stroke="#111827"
                               />
 
@@ -1350,7 +1397,7 @@ export default function SummaryPage() {
                                       y={y}
                                       width={deltaMetricColWidth}
                                       height={deltaRowHeight}
-                                      fill="#FFFFFF"
+                                      fill={plotTheme.row}
                                       stroke="#111827"
                                     />
                                   </g>
@@ -1361,7 +1408,7 @@ export default function SummaryPage() {
                                 x={deltaTurnColWidth / 2}
                                 y={y + 22}
                                 fontSize="15"
-                                fill="#111827"
+                                fill={plotTheme.textPrimary}
                                 textAnchor="middle"
                                 fontWeight="700"
                               >
