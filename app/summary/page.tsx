@@ -50,14 +50,14 @@ type TrackTemplate = {
 type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
 type ViewTab = "balanceComparison" | "balanceAnalysis";
 type CarColourMap = Record<string, string>;
+type DriverDeltaMap = Record<string, Record<number, string>>;
+
 type SequentialPoint = {
   key: string;
   corner: number;
   phase: "entry" | "mid" | "exit";
   label: string;
 };
-
-type DeltaMap = Record<number, string>;
 
 const AVAILABLE_COLOURS = [
   "#ef4444",
@@ -136,6 +136,14 @@ function formatDeltaCell(value: number | null): string {
   return value.toFixed(3);
 }
 
+function readDelta(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export default function CornerBalanceComparisonChart() {
   const [debriefs, setDebriefs] = useState<CleanedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,7 +158,8 @@ export default function CornerBalanceComparisonChart() {
   const [carColours, setCarColours] = useState<CarColourMap>({});
   const [activeTab, setActiveTab] = useState<ViewTab>("balanceComparison");
 
-  const [deltaByCorner, setDeltaByCorner] = useState<DeltaMap>({});
+  const [referenceId, setReferenceId] = useState<string | null>(null);
+  const [driverDeltas, setDriverDeltas] = useState<DriverDeltaMap>({});
 
   const [trackTemplate, setTrackTemplate] = useState<TrackTemplate | null>(null);
   const [trackMapAspectRatio, setTrackMapAspectRatio] = useState<number>(1);
@@ -292,14 +301,39 @@ export default function CornerBalanceComparisonChart() {
   }, [selectedDebriefs]);
 
   useEffect(() => {
-    setDeltaByCorner((prev) => {
-      const next: DeltaMap = {};
-      allCornerNumbers.forEach((corner) => {
-        next[corner] = prev[corner] ?? "";
+    if (!selectedDebriefs.length) {
+      setReferenceId(null);
+      return;
+    }
+
+    const stillValid = selectedDebriefs.some((d) => d.id === referenceId);
+    if (!stillValid) {
+      setReferenceId(selectedDebriefs[0].id);
+    }
+  }, [selectedDebriefs, referenceId]);
+
+  useEffect(() => {
+    setDriverDeltas((prev) => {
+      const next: DriverDeltaMap = {};
+
+      selectedDebriefs.forEach((debrief) => {
+        next[debrief.id] = {};
+        allCornerNumbers.forEach((corner) => {
+          next[debrief.id][corner] = prev[debrief.id]?.[corner] ?? "";
+        });
       });
+
       return next;
     });
-  }, [allCornerNumbers]);
+  }, [selectedDebriefs, allCornerNumbers]);
+
+  const referenceDebrief = useMemo(() => {
+    return selectedDebriefs.find((d) => d.id === referenceId) ?? null;
+  }, [selectedDebriefs, referenceId]);
+
+  const comparisonDebriefs = useMemo(() => {
+    return selectedDebriefs.filter((d) => d.id !== referenceId);
+  }, [selectedDebriefs, referenceId]);
 
   const sequentialXAxis = useMemo<SequentialPoint[]>(() => {
     if (phaseMode !== "all") return [];
@@ -386,52 +420,95 @@ export default function CornerBalanceComparisonChart() {
     }));
   }
 
-  function updateDelta(corner: number, value: string) {
+  function updateDriverDelta(debriefId: string, corner: number, value: string) {
     if (/^-?\d*\.?\d*$/.test(value) || value === "") {
-      setDeltaByCorner((prev) => ({
+      setDriverDeltas((prev) => ({
         ...prev,
-        [corner]: value,
+        [debriefId]: {
+          ...(prev[debriefId] ?? {}),
+          [corner]: value,
+        },
       }));
     }
   }
 
-  const analysisRows = useMemo(() => {
-    return allCornerNumbers.map((corner) => {
-      const deltaRaw = deltaByCorner[corner] ?? "";
-      const parsedDelta =
-        deltaRaw.trim() === "" || Number.isNaN(Number(deltaRaw)) ? null : Number(deltaRaw);
+  const analysisByDriver = useMemo(() => {
+    if (!referenceDebrief) return [];
 
-      const perDriver = selectedDebriefs.map((debrief) => {
-        const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
+    return comparisonDebriefs.map((compared) => {
+      const rows = allCornerNumbers.map((corner) => {
+        const refRow = referenceDebrief.corner_feedback.find((r) => r.cornerId === corner);
+        const cmpRow = compared.corner_feedback.find((r) => r.cornerId === corner);
 
-        const entry = clampBalance(row?.entryBalanceValue ?? null);
-        const mid = clampBalance(row?.midBalanceValue ?? null);
-        const exit = clampBalance(row?.exitBalanceValue ?? null);
-        const average = averageValid([entry, mid, exit]);
+        const refEntry = clampBalance(refRow?.entryBalanceValue ?? null);
+        const refMid = clampBalance(refRow?.midBalanceValue ?? null);
+        const refExit = clampBalance(refRow?.exitBalanceValue ?? null);
+        const refAverage = averageValid([refEntry, refMid, refExit]);
+
+        const cmpEntry = clampBalance(cmpRow?.entryBalanceValue ?? null);
+        const cmpMid = clampBalance(cmpRow?.midBalanceValue ?? null);
+        const cmpExit = clampBalance(cmpRow?.exitBalanceValue ?? null);
+        const cmpAverage = averageValid([cmpEntry, cmpMid, cmpExit]);
+
+        const delta = readDelta(driverDeltas[compared.id]?.[corner]);
 
         return {
-          debriefId: debrief.id,
-          driverName: debrief.driver_name,
-          sessionName: debrief.session_name,
-          entry,
-          mid,
-          exit,
-          average,
+          corner,
+          refEntry,
+          refMid,
+          refExit,
+          refAverage,
+          cmpEntry,
+          cmpMid,
+          cmpExit,
+          cmpAverage,
+          delta,
         };
       });
 
       return {
-        corner,
-        deltaRaw,
-        delta: parsedDelta,
-        perDriver,
+        compared,
+        rows,
       };
     });
-  }, [allCornerNumbers, deltaByCorner, selectedDebriefs]);
+  }, [referenceDebrief, comparisonDebriefs, allCornerNumbers, driverDeltas]);
+
+  const deltaSeries = useMemo(() => {
+    return comparisonDebriefs.map((debrief) => {
+      const points = allCornerNumbers
+        .map((corner) => {
+          const delta = readDelta(driverDeltas[debrief.id]?.[corner]);
+          if (delta === null) return null;
+
+          return {
+            corner,
+            delta,
+          };
+        })
+        .filter((point): point is { corner: number; delta: number } => Boolean(point));
+
+      return {
+        debrief,
+        points,
+      };
+    });
+  }, [comparisonDebriefs, allCornerNumbers, driverDeltas]);
+
+  const deltaValues = deltaSeries.flatMap((series) => series.points.map((p) => p.delta));
+  const deltaMaxAbs = Math.max(0.25, ...deltaValues.map((value) => Math.abs(value)));
+  const roundedDeltaMax = Math.ceil(deltaMaxAbs * 4) / 4;
+
+  const deltaTicks = [
+    -roundedDeltaMax,
+    -roundedDeltaMax / 2,
+    0,
+    roundedDeltaMax / 2,
+    roundedDeltaMax,
+  ];
 
   const deltaChartGeometry = {
     width: Math.max(1180, 160 + allCornerNumbers.length * 72),
-    height: 420,
+    height: 440,
     leftPadding: 86,
     rightPadding: 28,
     topPadding: 28,
@@ -442,25 +519,6 @@ export default function CornerBalanceComparisonChart() {
     deltaChartGeometry.width - deltaChartGeometry.leftPadding - deltaChartGeometry.rightPadding;
   const deltaPlotHeight =
     deltaChartGeometry.height - deltaChartGeometry.topPadding - deltaChartGeometry.bottomPadding;
-
-  const deltaValues = analysisRows
-    .map((row) => row.delta)
-    .filter((value): value is number => value !== null);
-
-  const deltaMaxAbs = Math.max(
-    0.25,
-    ...deltaValues.map((value) => Math.abs(value))
-  );
-
-  const roundedDeltaMax = Math.ceil(deltaMaxAbs * 4) / 4;
-
-  const deltaTicks = [
-    -roundedDeltaMax,
-    -roundedDeltaMax / 2,
-    0,
-    roundedDeltaMax / 2,
-    roundedDeltaMax,
-  ];
 
   function deltaXScale(cornerNumber: number): number {
     if (allCornerNumbers.length <= 1) {
@@ -478,19 +536,6 @@ export default function CornerBalanceComparisonChart() {
     const normalized = (value - min) / (max - min || 1);
     return deltaChartGeometry.topPadding + deltaPlotHeight - normalized * deltaPlotHeight;
   }
-
-  const deltaPoints = analysisRows
-    .filter((row): row is typeof analysisRows[number] & { delta: number } => row.delta !== null)
-    .map((row) => ({
-      corner: row.corner,
-      delta: row.delta,
-      x: deltaXScale(row.corner),
-      y: deltaYScale(row.delta),
-    }));
-
-  const deltaPath = deltaPoints
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-    .join(" ");
 
   if (loading) {
     return (
@@ -1073,13 +1118,12 @@ export default function CornerBalanceComparisonChart() {
       {activeTab === "balanceAnalysis" && (
         <div className="space-y-6">
           <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
-            <div className="mb-4">
+            <div className="mb-3">
               <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
-                Turn Delta Input
+                Analysis Reference
               </h3>
               <p className="mt-1 text-xs text-white/45">
-                Enter the lap time delta for each turn. These values are shared across the selected
-                drivers on this analysis tab.
+                Select the reference debrief. All other selected drivers will be compared against it.
               </p>
             </div>
 
@@ -1087,124 +1131,228 @@ export default function CornerBalanceComparisonChart() {
               <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm text-white/45">
                 Select one or more debriefs first.
               </div>
-            ) : allCornerNumbers.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm text-white/45">
-                No corner data available for the selected debriefs.
-              </div>
             ) : (
-              <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
-                {allCornerNumbers.map((corner) => (
-                  <div
-                    key={`delta-input-${corner}`}
-                    className="rounded-xl border border-white/8 bg-white/[0.03] p-3"
-                  >
-                    <label className="mb-2 block text-sm font-medium text-white/80">
-                      T{corner} Delta
-                    </label>
-                    <input
-                      type="text"
-                      value={deltaByCorner[corner] ?? ""}
-                      onChange={(e) => updateDelta(corner, e.target.value)}
-                      placeholder="e.g. 0.125"
-                      className="w-full rounded-lg border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
-                    />
-                  </div>
+              <select
+                value={referenceId ?? ""}
+                onChange={(e) => setReferenceId(e.target.value)}
+                className="w-full max-w-[520px] rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
+              >
+                {selectedDebriefs.map((debrief) => (
+                  <option key={debrief.id} value={debrief.id}>
+                    {formatDebriefLabel(debrief)}
+                  </option>
                 ))}
-              </div>
+              </select>
             )}
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
             <div className="mb-4">
               <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
-                Balance Analysis Table
+                Driver Delta Input
               </h3>
               <p className="mt-1 text-xs text-white/45">
-                Entry, mid, exit, average balance, and user-entered delta by corner.
+                Enter corner delta for each compared driver relative to the selected reference.
+                Positive delta can represent slower than the reference if that is your convention.
               </p>
             </div>
 
-            {selectedDebriefs.length === 0 || allCornerNumbers.length === 0 ? (
+            {!referenceDebrief || comparisonDebriefs.length === 0 ? (
               <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm text-white/45">
-                No analysis data to show.
+                Select at least two debriefs to use balance analysis.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl">
-                  <thead>
-                    <tr>
-                      <th className="sticky left-0 z-10 border-b border-white/10 bg-[#101826] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
-                        Turn
-                      </th>
-                      {selectedDebriefs.map((debrief) => (
-                        <th
-                          key={`th-${debrief.id}`}
-                          colSpan={4}
-                          className="border-b border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60"
+              <div className="space-y-4">
+                {comparisonDebriefs.map((debrief) => (
+                  <div
+                    key={`delta-block-${debrief.id}`}
+                    className="rounded-2xl border border-white/8 bg-white/[0.03] p-4"
+                  >
+                    <div className="mb-3 flex items-center gap-3">
+                      <span
+                        className="h-3 w-10 rounded-full"
+                        style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-white">{debrief.driver_name}</div>
+                        <div className="text-xs text-white/45">
+                          Compared to {referenceDebrief.driver_name}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+                      {allCornerNumbers.map((corner) => (
+                        <div
+                          key={`delta-input-${debrief.id}-${corner}`}
+                          className="rounded-xl border border-white/8 bg-[#111827] p-3"
                         >
-                          <div className="flex items-center justify-center gap-2">
-                            <span
-                              className="inline-block h-2.5 w-8 rounded-full"
-                              style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
-                            />
-                            <span>{debrief.driver_name}</span>
-                          </div>
-                        </th>
-                      ))}
-                      <th className="border-b border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
-                        Delta
-                      </th>
-                    </tr>
-
-                    <tr>
-                      <th className="sticky left-0 z-10 border-b border-white/10 bg-[#101826] px-4 py-3 text-left text-xs text-white/45">
-                        Corner
-                      </th>
-                      {selectedDebriefs.map((debrief) => (
-                        <FragmentHeader key={`subhead-${debrief.id}`} />
-                      ))}
-                      <th className="border-b border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs text-white/45">
-                        Input
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {analysisRows.map((row, index) => (
-                      <tr key={`analysis-row-${row.corner}`}>
-                        <td
-                          className={`sticky left-0 z-10 px-4 py-3 text-sm font-medium text-white ${
-                            index % 2 === 0 ? "bg-[#0d1522]" : "bg-[#0b1220]"
-                          }`}
-                        >
-                          T{row.corner}
-                        </td>
-
-                        {row.perDriver.map((driverRow) => (
-                          <FragmentCells
-                            key={`cells-${row.corner}-${driverRow.debriefId}`}
-                            entry={driverRow.entry}
-                            mid={driverRow.mid}
-                            exit={driverRow.exit}
-                            average={driverRow.average}
-                            striped={index % 2 === 0}
+                          <label className="mb-2 block text-sm font-medium text-white/80">
+                            T{corner} Delta
+                          </label>
+                          <input
+                            type="text"
+                            value={driverDeltas[debrief.id]?.[corner] ?? ""}
+                            onChange={(e) =>
+                              updateDriverDelta(debrief.id, corner, e.target.value)
+                            }
+                            placeholder="e.g. 0.125"
+                            className="w-full rounded-lg border border-white/10 bg-[#0b1220] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
                           />
-                        ))}
-
-                        <td
-                          className={`border-l border-white/10 px-4 py-3 text-center text-sm font-semibold ${
-                            index % 2 === 0 ? "bg-[#0d1522]" : "bg-[#0b1220]"
-                          } text-white`}
-                        >
-                          {formatDeltaCell(row.delta)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
+
+          {!referenceDebrief || comparisonDebriefs.length === 0 ? null : (
+            <div className="space-y-6">
+              {analysisByDriver.map(({ compared, rows }) => (
+                <div
+                  key={`analysis-table-${compared.id}`}
+                  className="rounded-2xl border border-white/10 bg-[#0f172a] p-4"
+                >
+                  <div className="mb-4 flex items-center gap-3">
+                    <span
+                      className="h-3 w-10 rounded-full"
+                      style={{ backgroundColor: carColours[compared.id] ?? "#3b82f6" }}
+                    />
+                    <div>
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                        {compared.driver_name} vs {referenceDebrief.driver_name}
+                      </h3>
+                      <p className="mt-1 text-xs text-white/45">
+                        Balance comparison and manually entered corner deltas.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl">
+                      <thead>
+                        <tr>
+                          <th className="bg-[#101826] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
+                            Turn
+                          </th>
+                          <th
+                            className="border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60"
+                            colSpan={4}
+                          >
+                            Reference
+                          </th>
+                          <th
+                            className="border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60"
+                            colSpan={4}
+                          >
+                            Compared
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
+                            Delta
+                          </th>
+                        </tr>
+                        <tr>
+                          <th className="bg-[#101826] px-4 py-3 text-left text-xs text-white/45">
+                            Corner
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Entry
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Mid
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Exit
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Avg
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Entry
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Mid
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Exit
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Avg
+                          </th>
+                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+                            Input
+                          </th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {rows.map((row, index) => {
+                          const bgClass = index % 2 === 0 ? "bg-[#0d1522]" : "bg-[#0b1220]";
+
+                          return (
+                            <tr key={`row-${compared.id}-${row.corner}`}>
+                              <td className={`${bgClass} px-4 py-3 text-sm font-medium text-white`}>
+                                T{row.corner}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
+                              >
+                                {formatBalanceCell(row.refEntry)}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
+                              >
+                                {formatBalanceCell(row.refMid)}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
+                              >
+                                {formatBalanceCell(row.refExit)}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white`}
+                              >
+                                {formatBalanceCell(row.refAverage)}
+                              </td>
+
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
+                              >
+                                {formatBalanceCell(row.cmpEntry)}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
+                              >
+                                {formatBalanceCell(row.cmpMid)}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
+                              >
+                                {formatBalanceCell(row.cmpExit)}
+                              </td>
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white`}
+                              >
+                                {formatBalanceCell(row.cmpAverage)}
+                              </td>
+
+                              <td
+                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white`}
+                              >
+                                {formatDeltaCell(row.delta)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-[#09111f] p-4">
             <div className="mb-4">
@@ -1212,13 +1360,13 @@ export default function CornerBalanceComparisonChart() {
                 Delta by Turn
               </h3>
               <p className="mt-1 text-xs text-white/45">
-                Lap delta on the y-axis and turn number on the x-axis.
+                All compared drivers plotted together. X axis is turn number, Y axis is entered delta.
               </p>
             </div>
 
-            {selectedDebriefs.length === 0 || allCornerNumbers.length === 0 ? (
+            {!referenceDebrief || comparisonDebriefs.length === 0 || allCornerNumbers.length === 0 ? (
               <div className="flex h-[320px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
-                No delta chart data available.
+                Select a reference and at least one compared driver to display the delta chart.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1227,15 +1375,27 @@ export default function CornerBalanceComparisonChart() {
                   className="min-w-[980px]"
                 >
                   <defs>
-                    <filter id="delta-glow" x="-50%" y="-50%" width="200%" height="200%">
-                      <feDropShadow
-                        dx="0"
-                        dy="0"
-                        stdDeviation="3"
-                        floodColor="#f59e0b"
-                        floodOpacity="0.45"
-                      />
-                    </filter>
+                    {comparisonDebriefs.map((debrief) => {
+                      const colour = carColours[debrief.id] ?? "#3b82f6";
+                      return (
+                        <filter
+                          id={`delta-glow-${debrief.id}`}
+                          key={`delta-glow-${debrief.id}`}
+                          x="-50%"
+                          y="-50%"
+                          width="200%"
+                          height="200%"
+                        >
+                          <feDropShadow
+                            dx="0"
+                            dy="0"
+                            stdDeviation="3"
+                            floodColor={colour}
+                            floodOpacity="0.45"
+                          />
+                        </filter>
+                      );
+                    })}
                   </defs>
 
                   <rect
@@ -1311,31 +1471,51 @@ export default function CornerBalanceComparisonChart() {
                     );
                   })}
 
-                  {deltaPoints.length > 1 && (
-                    <path
-                      d={deltaPath}
-                      fill="none"
-                      stroke="#f59e0b"
-                      strokeWidth={3}
-                      strokeLinejoin="round"
-                      strokeLinecap="round"
-                      filter="url(#delta-glow)"
-                    />
-                  )}
+                  {deltaSeries.map(({ debrief, points }) => {
+                    const colour = carColours[debrief.id] ?? "#3b82f6";
 
-                  {deltaPoints.map((point) => (
-                    <g key={`delta-point-${point.corner}`}>
-                      <circle
-                        cx={point.x}
-                        cy={point.y}
-                        r={5.5}
-                        fill="#f59e0b"
-                        stroke="#07101d"
-                        strokeWidth={2}
-                      />
-                      <title>{`T${point.corner} | ${point.delta.toFixed(3)}`}</title>
-                    </g>
-                  ))}
+                    const svgPoints = points.map((point) => ({
+                      ...point,
+                      x: deltaXScale(point.corner),
+                      y: deltaYScale(point.delta),
+                    }));
+
+                    const path = svgPoints
+                      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+                      .join(" ");
+
+                    return (
+                      <g key={`delta-series-${debrief.id}`}>
+                        {svgPoints.length > 1 && (
+                          <path
+                            d={path}
+                            fill="none"
+                            stroke={colour}
+                            strokeWidth={3}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                            filter={`url(#delta-glow-${debrief.id})`}
+                          />
+                        )}
+
+                        {svgPoints.map((point) => (
+                          <g key={`delta-point-${debrief.id}-${point.corner}`}>
+                            <circle
+                              cx={point.x}
+                              cy={point.y}
+                              r={5.5}
+                              fill={colour}
+                              stroke="#07101d"
+                              strokeWidth={2}
+                            />
+                            <title>
+                              {`${debrief.driver_name} | T${point.corner} | ${point.delta.toFixed(3)}`}
+                            </title>
+                          </g>
+                        ))}
+                      </g>
+                    );
+                  })}
 
                   <text
                     x={deltaChartGeometry.leftPadding}
@@ -1350,6 +1530,34 @@ export default function CornerBalanceComparisonChart() {
               </div>
             )}
           </div>
+
+          {comparisonDebriefs.length > 0 && (
+            <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Delta Legend
+              </h3>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                {comparisonDebriefs.map((debrief) => (
+                  <div
+                    key={`delta-legend-${debrief.id}`}
+                    className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2"
+                  >
+                    <span
+                      className="h-3 w-10 rounded-full"
+                      style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm text-white">{debrief.driver_name}</div>
+                      <div className="truncate text-xs text-white/50">
+                        Compared to {referenceDebrief?.driver_name ?? "reference"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1381,57 +1589,5 @@ export default function CornerBalanceComparisonChart() {
         </div>
       )}
     </div>
-  );
-}
-
-function FragmentHeader() {
-  return (
-    <>
-      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-        Entry
-      </th>
-      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-        Mid
-      </th>
-      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-        Exit
-      </th>
-      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-        Avg
-      </th>
-    </>
-  );
-}
-
-function FragmentCells({
-  entry,
-  mid,
-  exit,
-  average,
-  striped,
-}: {
-  entry: number | null;
-  mid: number | null;
-  exit: number | null;
-  average: number | null;
-  striped: boolean;
-}) {
-  const bgClass = striped ? "bg-[#0d1522]" : "bg-[#0b1220]";
-
-  return (
-    <>
-      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm text-white/85 ${bgClass}`}>
-        {formatBalanceCell(entry)}
-      </td>
-      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm text-white/85 ${bgClass}`}>
-        {formatBalanceCell(mid)}
-      </td>
-      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm text-white/85 ${bgClass}`}>
-        {formatBalanceCell(exit)}
-      </td>
-      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white ${bgClass}`}>
-        {formatBalanceCell(average)}
-      </td>
-    </>
   );
 }
