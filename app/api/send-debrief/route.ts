@@ -193,60 +193,62 @@ async function buildDebriefPdf(payload: {
     y: number,
     width: number,
     height: number,
-    label: string,
-    value?: number
+   label: string,
+   value?: number,
+   fontSize = 7.8
   ) {
-    const fill = getBalanceColor(value);
+   const fill = getBalanceColor(value);
 
-    page.drawRectangle({
+   page.drawRectangle({
       x,
       y,
-      width,
+     width,
       height,
       color: fill,
-      borderColor: colors.border,
-      borderWidth: 0.8,
+     borderColor: colors.border,
+     borderWidth: 0.8,
     });
 
-    const textWidth = bold.widthOfTextAtSize(label, 7.8);
+    const textWidth = bold.widthOfTextAtSize(label, fontSize);
     page.drawText(label, {
       x: x + (width - textWidth) / 2,
-      y: y + height / 2 - 3,
-      size: 7.8,
-      font: bold,
-      color: colors.text,
+      y: y + height / 2 - fontSize / 2 + 1,
+     size: fontSize,
+     font: bold,
+     color: colors.text,
     });
   }
 
   function drawTurnChip(
     page: PDFPage,
     x: number,
-    y: number,
-    width: number,
-    height: number,
-    label: string,
-    color?: TurnColor
+   y: number,
+   width: number,
+   height: number,
+   label: string,
+   color?: TurnColor,
+   fontSize = 7.8
   ) {
     const fill = getTurnColor(color);
 
     page.drawRectangle({
-      x,
-      y,
-      width,
-      height,
-      color: fill,
-      borderColor: colors.border,
-      borderWidth: 0.8,
+    x,
+    y,
+    width,
+    height,
+    color: fill,
+    borderColor: colors.border,
+    borderWidth: 0.8,
     });
 
-    const textWidth = bold.widthOfTextAtSize(label, 7.8);
+    const textWidth = bold.widthOfTextAtSize(label, fontSize);
     page.drawText(label, {
       x: x + (width - textWidth) / 2,
-      y: y + height / 2 - 3,
-      size: 7.8,
+      y: y + height / 2 - fontSize / 2 + 1,
+      size: fontSize,
       font: bold,
       color: colors.text,
-    });
+   });
   }
 
   async function drawTrackMapPanel(
@@ -518,7 +520,7 @@ async function buildDebriefPdf(payload: {
   const cornerLookup = new Map(payload.corners.map((corner) => [corner.id, corner]));
   const sortedRows = [...payload.cornerFeedback].sort((a, b) => a.cornerId - b.cornerId);
 
-  async function startCornerSummaryPage() {
+  async function startCornerSummaryPageFitted(rowCount: number) {
     const page = addPage();
 
     const titleY = pageHeight - 40;
@@ -531,27 +533,30 @@ async function buildDebriefPdf(payload: {
     });
 
     const tableX = margin;
-    const tableW = 560;
     const mapGap = 18;
+
+    // Slightly narrower table to free a bit more room visually
+    const tableW = 420;
     const mapX = tableX + tableW + mapGap;
     const mapW = pageWidth - margin - mapX;
-    const mapY = 150;
-    const mapH = 380;
+
+    // Keep map + notes on right, but make them adaptive
+    const notesY = 24;
+    const notesH = 78;
+    const mapY = 110;
+    const mapH = 420;
 
     await drawTrackMapPanel(
-      page,
-      mapX,
-      mapY,
-      mapW,
-      mapH,
-      payload.trackMapUrl,
-      payload.corners,
-      payload.incidentMarkers,
-      "Track Map"
-    );
-
-    const notesY = 24;
-    const notesH = 112;
+     page,
+     mapX,
+     mapY,
+     mapW,
+     mapH,
+     payload.trackMapUrl,
+     payload.corners,
+     payload.incidentMarkers,
+     "Track Map"
+   );
 
     drawPanel(page, mapX, notesY, mapW, notesH, "Incident Notes");
 
@@ -559,21 +564,46 @@ async function buildDebriefPdf(payload: {
       payload.incidentMarkers.length > 0
         ? payload.incidentMarkers.flatMap((marker, index) =>
             wrapText(
-              `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
-              24
-            )
-          )
-        : ["No incident markers added"];
+             `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
+             24
+           )
+         )
+       : ["No incident markers added"];
 
-    rightIncidentLines.slice(0, 6).forEach((line, i) => {
+    rightIncidentLines.slice(0, 4).forEach((line, i) => {
       page.drawText(line, {
         x: mapX + 14,
-        y: notesY + notesH - 44 - i * 13,
-        size: 8.5,
-        font,
-        color: colors.muted,
+        y: notesY + notesH - 42 - i * 11,
+        size: 8,
+       font,
+       color: colors.muted,
       });
     });
+
+    // Table vertical sizing
+    const headerTopY = pageHeight - 68;
+    const headerHeight = 24;
+    const tableTopAfterHeader = headerTopY - 28;
+    const tableBottomY = 28;
+
+    const availableTableHeight = tableTopAfterHeader - tableBottomY;
+
+   // Fit all rows into available height
+    const rowGap = 4;
+    const fittedRowHeight = Math.floor(
+      (availableTableHeight - rowGap * (rowCount - 1)) / rowCount
+    );
+
+    // Clamp so it doesn't become ridiculous
+   const rowHeight = Math.max(18, Math.min(30, fittedRowHeight));
+
+    const chipHeight = Math.max(12, rowHeight - 8);
+    const chipWidthTurn = 34;
+    const chipWidthBalance = 38;
+
+    const headerFontSize = rowHeight <= 20 ? 8 : 9;
+    const bodyFontSize = rowHeight <= 20 ? 7.5 : 9;
+    const chipFontSize = rowHeight <= 20 ? 6.5 : 7.8;
 
     return {
       page,
@@ -581,141 +611,160 @@ async function buildDebriefPdf(payload: {
       tableW,
       mapX,
       mapW,
-      cursorY: pageHeight - 68,
+      cursorY: tableTopAfterHeader,
+      headerTopY,
+      headerHeight,
+      rowHeight,
+      rowGap,
+      chipHeight,
+      chipWidthTurn,
+      chipWidthBalance,
+      headerFontSize,
+      bodyFontSize,
+      chipFontSize,
     };
   }
 
-  function drawTableHeader(page: PDFPage, tableX: number, tableW: number, y: number) {
-    page.drawRectangle({
+  function drawTableHeader(
+   page: PDFPage,
+    tableX: number,
+    tableW: number,
+    y: number,
+    fontSize: number
+  ) {
+   page.drawRectangle({
       x: tableX,
       y: y - 16,
       width: tableW,
-      height: 24,
-      color: colors.panel,
-      borderColor: colors.border,
+     height: 24,
+     color: colors.panel,
+     borderColor: colors.border,
       borderWidth: 1,
     });
 
     page.drawText("Corner", {
       x: tableX + 8,
       y: y - 8,
-      size: 9,
+      size: fontSize,
       font: bold,
       color: colors.muted,
     });
 
     page.drawText("Entry", {
-      x: tableX + 58,
+      x: tableX + 56,
       y: y - 8,
-      size: 9,
+      size: fontSize,
       font: bold,
-      color: colors.muted,
+     color: colors.muted,
     });
 
     page.drawText("Mid", {
-      x: tableX + 118,
-      y: y - 8,
-      size: 9,
+      x: tableX + 102,
+     y: y - 8,
+      size: fontSize,
       font: bold,
       color: colors.muted,
-    });
+   });
 
     page.drawText("Exit", {
-      x: tableX + 178,
+      x: tableX + 148,
       y: y - 8,
-      size: 9,
-      font: bold,
-      color: colors.muted,
+     size: fontSize,
+     font: bold,
+     color: colors.muted,
     });
 
-    page.drawText("Comment", {
-      x: tableX + 242,
+   page.drawText("Comment", {
+      x: tableX + 196,
       y: y - 8,
-      size: 9,
+      size: fontSize,
       font: bold,
       color: colors.muted,
-    });
+   });
   }
 
-  let summaryLayout = await startCornerSummaryPage();
-  drawTableHeader(summaryLayout.page, summaryLayout.tableX, summaryLayout.tableW, summaryLayout.cursorY);
-  summaryLayout.cursorY -= 28;
+  const summaryLayout = await startCornerSummaryPageFitted(sortedRows.length);
+
+  drawTableHeader(
+    summaryLayout.page,
+   summaryLayout.tableX,
+   summaryLayout.tableW,
+   summaryLayout.headerTopY,
+    summaryLayout.headerFontSize
+  );
 
   for (const row of sortedRows) {
-    const commentLines = wrapText(row.comment || "-", 38);
-    const rowHeight = Math.max(24, commentLines.length * 12 + 10);
+   const rowY = summaryLayout.cursorY;
 
-    if (summaryLayout.cursorY - rowHeight < 34) {
-      summaryLayout = await startCornerSummaryPage();
-      drawTableHeader(summaryLayout.page, summaryLayout.tableX, summaryLayout.tableW, summaryLayout.cursorY);
-      summaryLayout.cursorY -= 28;
-    }
-
-    summaryLayout.page.drawRectangle({
-      x: summaryLayout.tableX,
-      y: summaryLayout.cursorY - rowHeight + 8,
-      width: summaryLayout.tableW,
-      height: rowHeight,
+   summaryLayout.page.drawRectangle({
+     x: summaryLayout.tableX,
+      y: rowY - summaryLayout.rowHeight + 4,
+     width: summaryLayout.tableW,
+      height: summaryLayout.rowHeight,
       color: colors.panel,
-      borderColor: colors.border,
-      borderWidth: 1,
-    });
+     borderColor: colors.border,
+     borderWidth: 1,
+   });
 
-    const cornerMeta = cornerLookup.get(row.cornerId);
+   const cornerMeta = cornerLookup.get(row.cornerId);
 
-    const chipY = summaryLayout.cursorY - 15;
+   const chipY = rowY - summaryLayout.rowHeight / 2 - summaryLayout.chipHeight / 2 + 2;
 
     drawTurnChip(
-      summaryLayout.page,
-      summaryLayout.tableX + 8,
-      chipY,
-      36,
-      16,
-      `T${row.cornerId}`,
-      cornerMeta?.color
+     summaryLayout.page,
+     summaryLayout.tableX + 8,
+     chipY,
+     summaryLayout.chipWidthTurn,
+     summaryLayout.chipHeight,
+     `T${row.cornerId}`,
+     cornerMeta?.color,
+     summaryLayout.chipFontSize
     );
 
     drawBalanceChip(
       summaryLayout.page,
-      summaryLayout.tableX + 54,
-      chipY,
-      46,
-      16,
+      summaryLayout.tableX + 52,
+     chipY,
+     summaryLayout.chipWidthBalance,
+      summaryLayout.chipHeight,
       row.entryBalance || "-",
-      row.entryBalanceValue
+     row.entryBalanceValue,
+     summaryLayout.chipFontSize
+    );
+
+    drawBalanceChip(
+     summaryLayout.page,
+     summaryLayout.tableX + 98,
+     chipY,
+     summaryLayout.chipWidthBalance,
+     summaryLayout.chipHeight,
+     row.midBalance || "-",
+      row.midBalanceValue,
+      summaryLayout.chipFontSize
     );
 
     drawBalanceChip(
       summaryLayout.page,
-      summaryLayout.tableX + 114,
+      summaryLayout.tableX + 144,
       chipY,
-      46,
-      16,
-      row.midBalance || "-",
-      row.midBalanceValue
+     summaryLayout.chipWidthBalance,
+      summaryLayout.chipHeight,
+     row.exitBalance || "-",
+     row.exitBalanceValue,
+     summaryLayout.chipFontSize
     );
 
-    drawBalanceChip(
-      summaryLayout.page,
-      summaryLayout.tableX + 174,
-      chipY,
-      46,
-      16,
-      row.exitBalance || "-",
-      row.exitBalanceValue
-    );
+    const singleLineComment = (row.comment?.trim() || "-").slice(0, 52);
 
-    commentLines.forEach((line, i) => {
-      summaryLayout.page.drawText(line, {
-        x: summaryLayout.tableX + 242,
-        y: summaryLayout.cursorY - 9 - i * 12,
-        size: 9,
-        font,
-        color: colors.muted,
-      });
+    summaryLayout.page.drawText(singleLineComment, {
+     x: summaryLayout.tableX + 196,
+     y: rowY - summaryLayout.rowHeight / 2 - summaryLayout.bodyFontSize / 2 + 5,
+     size: summaryLayout.bodyFontSize,
+     font,
+      color: colors.muted,
     });
 
-    summaryLayout.cursorY -= rowHeight + 6;
+    summaryLayout.cursorY -= summaryLayout.rowHeight + summaryLayout.rowGap;
   }
 
   if (payload.incidentMarkers.length > 0) {
