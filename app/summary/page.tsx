@@ -33,29 +33,9 @@ type CleanedDebrief = {
   derived_year: string;
 };
 
-type TemplateCorner = {
-  id: number;
-  x: number;
-  y: number;
-};
-
-type TrackTemplate = {
-  id: string;
-  track_name: string;
-  team: string;
-  track_map_url: string | null;
-  corners: TemplateCorner[];
-};
-
-type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
+type PhaseMode = "entry" | "mid" | "exit" | "average";
 type CarColourMap = Record<string, string>;
-
-type SequentialPoint = {
-  key: string;
-  corner: number;
-  phase: "entry" | "mid" | "exit";
-  label: string;
-};
+type DeltaInputMap = Record<string, Record<number, string>>;
 
 const AVAILABLE_COLOURS = [
   "#ef4444",
@@ -92,10 +72,6 @@ function yLabel(value: number): string {
   return `OS ${value}`;
 }
 
-function formatDebriefLabel(row: CleanedDebrief): string {
-  return `${row.driver_name} | ${row.session_name} | ${row.track_name} | ${row.derived_year}`;
-}
-
 function getPointValue(
   row: SubmittedCornerFeedback,
   phaseMode: PhaseMode
@@ -107,26 +83,20 @@ function getPointValue(
   if (phaseMode === "entry") return entry;
   if (phaseMode === "mid") return mid;
   if (phaseMode === "exit") return exit;
-  if (phaseMode === "average") return averageValid([entry, mid, exit]);
-
-  return null;
+  return averageValid([entry, mid, exit]);
 }
 
-function isValidTemplateCornerArray(value: unknown): value is TemplateCorner[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (corner) =>
-        typeof corner === "object" &&
-        corner !== null &&
-        typeof (corner as TemplateCorner).id === "number" &&
-        typeof (corner as TemplateCorner).x === "number" &&
-        typeof (corner as TemplateCorner).y === "number"
-    )
-  );
+function formatDebriefShort(row: CleanedDebrief): string {
+  return `${row.driver_name} · ${row.session_name}`;
 }
 
-export default function CornerBalanceComparisonChart() {
+function parseDelta(value: string): number | null {
+  if (!value.trim()) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export default function CornerBalanceDeltaPage() {
   const [debriefs, setDebriefs] = useState<CleanedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,10 +107,10 @@ export default function CornerBalanceComparisonChart() {
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [phaseMode, setPhaseMode] = useState<PhaseMode>("average");
-  const [carColours, setCarColours] = useState<CarColourMap>({});
+  const [baselineId, setBaselineId] = useState<string>("");
 
-  const [trackTemplate, setTrackTemplate] = useState<TrackTemplate | null>(null);
-  const [trackMapAspectRatio, setTrackMapAspectRatio] = useState<number>(1);
+  const [carColours, setCarColours] = useState<CarColourMap>({});
+  const [deltaInputs, setDeltaInputs] = useState<DeltaInputMap>({});
 
   useEffect(() => {
     async function loadDebriefs() {
@@ -215,54 +185,24 @@ export default function CornerBalanceComparisonChart() {
     setSelectedIds((prev) => prev.filter((id) => filteredDebriefs.some((d) => d.id === id)));
   }, [filteredDebriefs]);
 
-  useEffect(() => {
-    async function loadTrackTemplate() {
-      if (trackFilter === "all") {
-        setTrackTemplate(null);
-        setTrackMapAspectRatio(1);
-        return;
-      }
-
-      const inferredTeam =
-        teamFilter !== "all"
-          ? teamFilter
-          : filteredDebriefs.find((d) => d.track_name === trackFilter)?.team ?? null;
-
-      let query = supabase
-        .from("debrief_templates")
-        .select("id, track_name, team, track_map_url, corners")
-        .eq("track_name", trackFilter);
-
-      if (inferredTeam) {
-        query = query.eq("team", inferredTeam);
-      }
-
-      const { data, error: templateError } = await query.limit(1).maybeSingle();
-
-      if (templateError || !data) {
-        setTrackTemplate(null);
-        setTrackMapAspectRatio(1);
-        return;
-      }
-
-      setTrackTemplate({
-        id: String(data.id),
-        track_name: String(data.track_name ?? ""),
-        team: String(data.team ?? ""),
-        track_map_url:
-          typeof data.track_map_url === "string" && data.track_map_url.trim()
-            ? data.track_map_url.trim()
-            : null,
-        corners: isValidTemplateCornerArray(data.corners) ? data.corners : [],
-      });
-    }
-
-    loadTrackTemplate();
-  }, [trackFilter, teamFilter, filteredDebriefs]);
-
   const selectedDebriefs = useMemo(() => {
     return filteredDebriefs.filter((d) => selectedIds.includes(d.id));
   }, [filteredDebriefs, selectedIds]);
+
+  useEffect(() => {
+    if (!selectedDebriefs.length) {
+      setBaselineId("");
+      return;
+    }
+
+    if (!selectedDebriefs.some((d) => d.id === baselineId)) {
+      setBaselineId(selectedDebriefs[0].id);
+    }
+  }, [selectedDebriefs, baselineId]);
+
+  const comparisonDebriefs = useMemo(() => {
+    return selectedDebriefs.filter((d) => d.id !== baselineId);
+  }, [selectedDebriefs, baselineId]);
 
   const allCornerNumbers = useMemo(() => {
     const cornerSet = new Set<number>();
@@ -278,77 +218,6 @@ export default function CornerBalanceComparisonChart() {
     return Array.from(cornerSet).sort((a, b) => a - b);
   }, [selectedDebriefs]);
 
-  const sequentialXAxis = useMemo<SequentialPoint[]>(() => {
-    if (phaseMode !== "all") return [];
-
-    const points: SequentialPoint[] = [];
-
-    allCornerNumbers.forEach((corner) => {
-      points.push(
-        {
-          key: `T${corner}-entry`,
-          corner,
-          phase: "entry",
-          label: `T${corner}E`,
-        },
-        {
-          key: `T${corner}-mid`,
-          corner,
-          phase: "mid",
-          label: `T${corner}M`,
-        },
-        {
-          key: `T${corner}-exit`,
-          corner,
-          phase: "exit",
-          label: `T${corner}X`,
-        }
-      );
-    });
-
-    return points;
-  }, [allCornerNumbers, phaseMode]);
-
-  const chartGeometry = {
-    width: Math.max(1180, phaseMode === "all" ? 140 + sequentialXAxis.length * 40 : 1180),
-    height: 520,
-    leftPadding: 86,
-    rightPadding: 28,
-    topPadding: 28,
-    bottomPadding: 78,
-  };
-
-  const plotWidth =
-    chartGeometry.width - chartGeometry.leftPadding - chartGeometry.rightPadding;
-  const plotHeight =
-    chartGeometry.height - chartGeometry.topPadding - chartGeometry.bottomPadding;
-
-  function xScaleStandard(cornerNumber: number): number {
-    if (allCornerNumbers.length <= 1) {
-      return chartGeometry.leftPadding + plotWidth / 2;
-    }
-
-    const index = allCornerNumbers.findIndex((c) => c === cornerNumber);
-    const step = plotWidth / (allCornerNumbers.length - 1);
-    return chartGeometry.leftPadding + index * step;
-  }
-
-  function xScaleSequential(index: number): number {
-    if (sequentialXAxis.length <= 1) {
-      return chartGeometry.leftPadding + plotWidth / 2;
-    }
-
-    const step = plotWidth / (sequentialXAxis.length - 1);
-    return chartGeometry.leftPadding + index * step;
-  }
-
-  function yScale(value: number): number {
-    const min = -3;
-    const max = 3;
-    const normalized = (value - min) / (max - min);
-    return chartGeometry.topPadding + plotHeight - normalized * plotHeight;
-  }
-
   function toggleSelection(id: string) {
     setSelectedIds((prev) => {
       if (prev.includes(id)) return prev.filter((item) => item !== id);
@@ -363,10 +232,65 @@ export default function CornerBalanceComparisonChart() {
     }));
   }
 
+  function updateDeltaInput(driverId: string, corner: number, value: string) {
+    setDeltaInputs((prev) => ({
+      ...prev,
+      [driverId]: {
+        ...(prev[driverId] ?? {}),
+        [corner]: value,
+      },
+    }));
+  }
+
+  const chartGeometry = {
+    width: Math.max(1100, 140 + allCornerNumbers.length * 72),
+    height: 520,
+    leftPadding: 86,
+    rightPadding: 28,
+    topPadding: 28,
+    bottomPadding: 76,
+  };
+
+  const plotWidth =
+    chartGeometry.width - chartGeometry.leftPadding - chartGeometry.rightPadding;
+  const plotHeight =
+    chartGeometry.height - chartGeometry.topPadding - chartGeometry.bottomPadding;
+
+  function xScale(cornerNumber: number): number {
+    if (allCornerNumbers.length <= 1) {
+      return chartGeometry.leftPadding + plotWidth / 2;
+    }
+
+    const index = allCornerNumbers.findIndex((c) => c === cornerNumber);
+    const step = plotWidth / (allCornerNumbers.length - 1);
+    return chartGeometry.leftPadding + index * step;
+  }
+
+  function yScale(value: number): number {
+    const min = -3;
+    const max = 3;
+    const normalized = (value - min) / (max - min);
+    return chartGeometry.topPadding + plotHeight - normalized * plotHeight;
+  }
+
+  const driverTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+
+    comparisonDebriefs.forEach((driver) => {
+      const perCorner = deltaInputs[driver.id] ?? {};
+      totals[driver.id] = allCornerNumbers.reduce((sum, corner) => {
+        const value = parseDelta(perCorner[corner] ?? "");
+        return sum + (value ?? 0);
+      }, 0);
+    });
+
+    return totals;
+  }, [comparisonDebriefs, deltaInputs, allCornerNumbers]);
+
   if (loading) {
     return (
       <div className="rounded-2xl border border-white/10 bg-[#0b1220] p-6 text-white">
-        Loading balance comparison chart...
+        Loading corner balance delta page...
       </div>
     );
   }
@@ -381,11 +305,21 @@ export default function CornerBalanceComparisonChart() {
 
   return (
     <div className="space-y-6 rounded-2xl border border-white/10 bg-[#0b1220] p-6 text-white shadow-2xl">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Corner Balance Comparison</h2>
-        <p className="mt-2 text-sm text-white/60">
-          Understeer is negative, neutral is zero, oversteer is positive.
-        </p>
+      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Corner Balance vs Manual Delta
+          </h1>
+          <p className="mt-2 text-sm text-white/60">
+            Compare balance corner-by-corner, then manually enter time loss against a selected
+            baseline car.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-right">
+          <div className="text-xs uppercase tracking-[0.18em] text-white/45">Selected cars</div>
+          <div className="mt-1 text-lg font-semibold">{selectedDebriefs.length}</div>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -441,7 +375,6 @@ export default function CornerBalanceComparisonChart() {
             onChange={(e) => setPhaseMode(e.target.value as PhaseMode)}
             className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
           >
-            <option value="all">All</option>
             <option value="average">Average</option>
             <option value="entry">Entry</option>
             <option value="mid">Mid</option>
@@ -452,13 +385,13 @@ export default function CornerBalanceComparisonChart() {
 
       <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Available Debriefs
-          </h3>
+          </h2>
           <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
         </div>
 
-        <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+        <div className="grid max-h-[280px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
           {filteredDebriefs.map((row) => {
             const checked = selectedIds.includes(row.id);
 
@@ -477,7 +410,7 @@ export default function CornerBalanceComparisonChart() {
                   onChange={() => toggleSelection(row.id)}
                   className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent"
                 />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-white">{row.driver_name}</div>
                   <div className="truncate text-xs text-white/55">
                     {row.session_name} · {row.track_name} · {row.team} · {row.derived_year}
@@ -496,92 +429,65 @@ export default function CornerBalanceComparisonChart() {
       </div>
 
       {selectedDebriefs.length > 0 && (
-        <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
-              Car Colours
-            </h3>
-            <p className="mt-1 text-xs text-white/45">
-              Select the line colour for each selected car before the chart.
-            </p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            {selectedDebriefs.map((row) => (
-              <div
-                key={row.id}
-                className="flex items-center justify-between rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3"
-              >
-                <div className="min-w-0 pr-4">
-                  <div className="truncate text-sm font-medium text-white">{row.driver_name}</div>
-                  <div className="truncate text-xs text-white/50">
-                    {row.session_name} · {row.track_name}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={carColours[row.id] ?? "#3b82f6"}
-                    onChange={(e) => updateColour(row.id, e.target.value)}
-                    className="h-10 w-14 cursor-pointer rounded-md border border-white/10 bg-transparent p-1"
-                  />
-                  <div
-                    className="h-4 w-10 rounded-full"
-                    style={{ backgroundColor: carColours[row.id] ?? "#3b82f6" }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {trackFilter !== "all" && trackTemplate?.track_map_url && (
-        <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
-                Track Map
-              </h3>
+        <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+          <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+            <div className="mb-3">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Baseline Car
+              </h2>
               <p className="mt-1 text-xs text-white/45">
-                {trackTemplate.track_name}
-                {trackTemplate.team ? ` · ${trackTemplate.team}` : ""}
+                All manual delta inputs below are interpreted relative to this selected baseline.
               </p>
             </div>
 
-            <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-white/55">
-              {trackTemplate.corners.length} corners
-            </div>
+            <select
+              value={baselineId}
+              onChange={(e) => setBaselineId(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
+            >
+              {selectedDebriefs.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {formatDebriefShort(row)} · {row.track_name}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div className="mx-auto w-full max-w-[760px]">
-            <div
-              className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-[#09111f]"
-              style={{ aspectRatio: String(trackMapAspectRatio) }}
-            >
-              <img
-                src={trackTemplate.track_map_url}
-                alt={`${trackTemplate.track_name} track map`}
-                className="absolute inset-0 h-full w-full object-contain"
-                onLoad={(e) => {
-                  const img = e.currentTarget;
-                  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-                    setTrackMapAspectRatio(img.naturalWidth / img.naturalHeight);
-                  }
-                }}
-              />
+          <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+            <div className="mb-3">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Car Colours
+              </h2>
+              <p className="mt-1 text-xs text-white/45">
+                Used on the chart and summary cards.
+              </p>
+            </div>
 
-              {trackTemplate.corners.map((corner) => (
+            <div className="space-y-2">
+              {selectedDebriefs.map((row) => (
                 <div
-                  key={corner.id}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-[#141A22]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-lg"
-                  style={{
-                    left: `${corner.x}%`,
-                    top: `${corner.y}%`,
-                  }}
+                  key={row.id}
+                  className="flex items-center justify-between rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2"
                 >
-                  T{corner.id}
+                  <div className="min-w-0 pr-3">
+                    <div className="truncate text-sm font-medium text-white">
+                      {row.driver_name}
+                    </div>
+                    <div className="truncate text-xs text-white/50">{row.session_name}</div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={carColours[row.id] ?? "#3b82f6"}
+                      onChange={(e) => updateColour(row.id, e.target.value)}
+                      className="h-10 w-14 cursor-pointer rounded-md border border-white/10 bg-transparent p-1"
+                    />
+                    <div
+                      className="h-4 w-10 rounded-full"
+                      style={{ backgroundColor: carColours[row.id] ?? "#3b82f6" }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -592,11 +498,11 @@ export default function CornerBalanceComparisonChart() {
       <div className="rounded-2xl border border-white/10 bg-[#09111f] p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
-              Balance Comparison Chart
-            </h3>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+              Corner by Corner Balance Chart
+            </h2>
             <p className="mt-1 text-xs text-white/45">
-              Major lines at whole steps, minor dashed lines at half steps.
+              Understeer is negative, neutral is zero, oversteer is positive.
             </p>
           </div>
 
@@ -607,17 +513,12 @@ export default function CornerBalanceComparisonChart() {
             <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
               Corners: {allCornerNumbers.length}
             </span>
-            {phaseMode === "all" && (
-              <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
-                Points: {sequentialXAxis.length}
-              </span>
-            )}
           </div>
         </div>
 
         {selectedDebriefs.length === 0 ? (
           <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
-            Select one or more debriefs to display the balance comparison chart.
+            Select one or more debriefs to display the chart.
           </div>
         ) : allCornerNumbers.length === 0 ? (
           <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
@@ -675,7 +576,6 @@ export default function CornerBalanceComparisonChart() {
 
               {MINOR_TICKS.map((value) => {
                 const y = yScale(value);
-
                 return (
                   <line
                     key={`minor-${value}`}
@@ -717,151 +617,61 @@ export default function CornerBalanceComparisonChart() {
                 );
               })}
 
-              {phaseMode === "all"
-                ? sequentialXAxis.map((point, index) => {
-                    const x = xScaleSequential(index);
-                    const isCornerStart = point.phase === "entry";
-                    const isCornerMid = point.phase === "mid";
-                    const isCornerEnd = point.phase === "exit";
-
-                    return (
-                      <g key={`seq-axis-${point.key}`}>
-                        <line
-                          x1={x}
-                          x2={x}
-                          y1={chartGeometry.topPadding}
-                          y2={chartGeometry.topPadding + plotHeight}
-                          stroke={
-                            isCornerStart
-                              ? "rgba(255,255,255,0.10)"
-                              : "rgba(255,255,255,0.05)"
-                          }
-                          strokeWidth={isCornerStart ? 1.2 : 1}
-                        />
-                        <text
-                          x={x}
-                          y={chartGeometry.topPadding + plotHeight + 24}
-                          textAnchor="middle"
-                          fontSize="11"
-                          fill={
-                            isCornerStart || isCornerEnd
-                              ? "rgba(255,255,255,0.72)"
-                              : "rgba(255,255,255,0.52)"
-                          }
-                        >
-                          {point.label}
-                        </text>
-
-                        {isCornerMid && (
-                          <text
-                            x={x}
-                            y={chartGeometry.topPadding + plotHeight + 42}
-                            textAnchor="middle"
-                            fontSize="10"
-                            fill="rgba(255,255,255,0.35)"
-                          >
-                            T{point.corner}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })
-                : allCornerNumbers.map((corner) => {
-                    const x = xScaleStandard(corner);
-                    return (
-                      <g key={`corner-${corner}`}>
-                        <line
-                          x1={x}
-                          x2={x}
-                          y1={chartGeometry.topPadding}
-                          y2={chartGeometry.topPadding + plotHeight}
-                          stroke="rgba(255,255,255,0.06)"
-                          strokeWidth={1}
-                        />
-                        <text
-                          x={x}
-                          y={chartGeometry.topPadding + plotHeight + 24}
-                          textAnchor="middle"
-                          fontSize="12"
-                          fill="rgba(255,255,255,0.72)"
-                        >
-                          T{corner}
-                        </text>
-                      </g>
-                    );
-                  })}
+              {allCornerNumbers.map((corner) => {
+                const x = xScale(corner);
+                return (
+                  <g key={`corner-${corner}`}>
+                    <line
+                      x1={x}
+                      x2={x}
+                      y1={chartGeometry.topPadding}
+                      y2={chartGeometry.topPadding + plotHeight}
+                      stroke="rgba(255,255,255,0.06)"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={x}
+                      y={chartGeometry.topPadding + plotHeight + 24}
+                      textAnchor="middle"
+                      fontSize="12"
+                      fill="rgba(255,255,255,0.72)"
+                    >
+                      T{corner}
+                    </text>
+                  </g>
+                );
+              })}
 
               {selectedDebriefs.map((debrief) => {
                 const colour = carColours[debrief.id] ?? "#3b82f6";
 
-                const points =
-                  phaseMode === "all"
-                    ? sequentialXAxis
-                        .map((seqPoint, index) => {
-                          const row = debrief.corner_feedback.find(
-                            (r) => r.cornerId === seqPoint.corner
-                          );
-                          if (!row) return null;
+                const points = allCornerNumbers
+                  .map((corner) => {
+                    const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
+                    if (!row) return null;
 
-                          let value: number | null = null;
-                          if (seqPoint.phase === "entry") {
-                            value = clampBalance(row.entryBalanceValue ?? null);
-                          }
-                          if (seqPoint.phase === "mid") {
-                            value = clampBalance(row.midBalanceValue ?? null);
-                          }
-                          if (seqPoint.phase === "exit") {
-                            value = clampBalance(row.exitBalanceValue ?? null);
-                          }
+                    const value = getPointValue(row, phaseMode);
+                    if (value === null) return null;
 
-                          if (value === null) return null;
-
-                          return {
-                            key: seqPoint.key,
-                            x: xScaleSequential(index),
-                            y: yScale(value),
-                            value,
-                            label: seqPoint.label,
-                          };
-                        })
-                        .filter(
-                          (
-                            point
-                          ): point is {
-                            key: string;
-                            x: number;
-                            y: number;
-                            value: number;
-                            label: string;
-                          } => Boolean(point)
-                        )
-                    : allCornerNumbers
-                        .map((corner) => {
-                          const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
-                          if (!row) return null;
-
-                          const value = getPointValue(row, phaseMode);
-                          if (value === null) return null;
-
-                          return {
-                            key: `T${corner}`,
-                            x: xScaleStandard(corner),
-                            y: yScale(value),
-                            value,
-                            label: `T${corner}`,
-                          };
-                        })
-                        .filter(
-                          (
-                            point
-                          ): point is {
-                            key: string;
-                            x: number;
-                            y: number;
-                            value: number;
-                            label: string;
-                          } => Boolean(point)
-                        );
+                    return {
+                      key: `T${corner}`,
+                      x: xScale(corner),
+                      y: yScale(value),
+                      value,
+                      label: `T${corner}`,
+                    };
+                  })
+                  .filter(
+                    (
+                      point
+                    ): point is {
+                      key: string;
+                      x: number;
+                      y: number;
+                      value: number;
+                      label: string;
+                    } => Boolean(point)
+                  );
 
                 const path = points
                   .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
@@ -878,6 +688,7 @@ export default function CornerBalanceComparisonChart() {
                         strokeLinejoin="round"
                         strokeLinecap="round"
                         filter={`url(#glow-${debrief.id})`}
+                        opacity={debrief.id === baselineId ? 1 : 0.95}
                       />
                     )}
 
@@ -886,10 +697,10 @@ export default function CornerBalanceComparisonChart() {
                         <circle
                           cx={point.x}
                           cy={point.y}
-                          r={5.5}
+                          r={debrief.id === baselineId ? 6.5 : 5.5}
                           fill={colour}
-                          stroke="#07101d"
-                          strokeWidth={2}
+                          stroke={debrief.id === baselineId ? "#ffffff" : "#07101d"}
+                          strokeWidth={debrief.id === baselineId ? 2.4 : 2}
                         />
                         <title>
                           {`${debrief.driver_name} | ${point.label} | ${point.value.toFixed(2)}`}
@@ -914,26 +725,203 @@ export default function CornerBalanceComparisonChart() {
         )}
       </div>
 
+      {selectedDebriefs.length > 1 && baselineId && (
+        <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {comparisonDebriefs.map((driver) => (
+              <div
+                key={`summary-${driver.id}`}
+                className="rounded-2xl border border-white/10 bg-[#0f172a] p-4"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">
+                      Total delta vs baseline
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-white">
+                      {driver.driver_name}
+                    </div>
+                    <div className="mt-1 text-xs text-white/50">
+                      {driver.session_name} · {driver.track_name}
+                    </div>
+                  </div>
+
+                  <div
+                    className="h-4 w-12 rounded-full"
+                    style={{ backgroundColor: carColours[driver.id] ?? "#3b82f6" }}
+                  />
+                </div>
+
+                <div className="mt-4 rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3">
+                  <div className="text-3xl font-semibold text-white">
+                    {driverTotals[driver.id]?.toFixed(3) ?? "0.000"}s
+                  </div>
+                  <div className="mt-1 text-xs text-white/45">
+                    Sum of manually entered corner deltas
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                  Manual Corner Delta Table
+                </h2>
+                <p className="mt-1 text-xs text-white/45">
+                  Enter time lost per corner for each compared driver relative to the selected
+                  baseline car.
+                </p>
+              </div>
+
+              <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-white/55">
+                Baseline:{" "}
+                {selectedDebriefs.find((d) => d.id === baselineId)?.driver_name ?? "Not selected"}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-0 overflow-hidden rounded-2xl">
+                <thead>
+                  <tr>
+                    <th className="sticky left-0 z-10 border-b border-white/10 bg-[#101927] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
+                      Corner
+                    </th>
+                    <th className="border-b border-white/10 bg-[#101927] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
+                      Baseline Balance
+                    </th>
+                    {comparisonDebriefs.map((driver) => (
+                      <th
+                        key={`head-${driver.id}`}
+                        className="border-b border-white/10 bg-[#101927] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-white/55"
+                      >
+                        <div className="flex min-w-[200px] items-center gap-2">
+                          <span
+                            className="h-3 w-8 rounded-full"
+                            style={{ backgroundColor: carColours[driver.id] ?? "#3b82f6" }}
+                          />
+                          <span>{driver.driver_name} delta (s)</span>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {allCornerNumbers.map((corner, rowIndex) => {
+                    const baselineDebrief = selectedDebriefs.find((d) => d.id === baselineId);
+                    const baselineRow = baselineDebrief?.corner_feedback.find(
+                      (r) => r.cornerId === corner
+                    );
+                    const baselineBalance = baselineRow
+                      ? getPointValue(baselineRow, phaseMode)
+                      : null;
+
+                    return (
+                      <tr
+                        key={`row-corner-${corner}`}
+                        className={rowIndex % 2 === 0 ? "bg-white/[0.02]" : "bg-transparent"}
+                      >
+                        <td className="sticky left-0 z-10 border-b border-white/6 bg-[#0f172a] px-4 py-3 text-sm font-medium text-white">
+                          T{corner}
+                        </td>
+
+                        <td className="border-b border-white/6 px-4 py-3 text-sm text-white/75">
+                          {baselineBalance !== null ? baselineBalance.toFixed(2) : "—"}
+                        </td>
+
+                        {comparisonDebriefs.map((driver) => {
+                          const value = deltaInputs[driver.id]?.[corner] ?? "";
+
+                          return (
+                            <td
+                              key={`input-${driver.id}-${corner}`}
+                              className="border-b border-white/6 px-4 py-3"
+                            >
+                              <input
+                                type="number"
+                                step="0.001"
+                                value={value}
+                                onChange={(e) =>
+                                  updateDeltaInput(driver.id, corner, e.target.value)
+                                }
+                                placeholder="0.000"
+                                className="w-full min-w-[140px] rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-white/25"
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+
+                  {!allCornerNumbers.length && (
+                    <tr>
+                      <td
+                        colSpan={comparisonDebriefs.length + 2}
+                        className="px-4 py-8 text-center text-sm text-white/45"
+                      >
+                        No corners available for the current selection.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+
+                {comparisonDebriefs.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td className="sticky left-0 z-10 border-t border-white/10 bg-[#101927] px-4 py-3 text-sm font-semibold text-white">
+                        Total
+                      </td>
+                      <td className="border-t border-white/10 bg-[#101927] px-4 py-3 text-sm text-white/50">
+                        —
+                      </td>
+                      {comparisonDebriefs.map((driver) => (
+                        <td
+                          key={`total-${driver.id}`}
+                          className="border-t border-white/10 bg-[#101927] px-4 py-3 text-sm font-semibold text-white"
+                        >
+                          {driverTotals[driver.id]?.toFixed(3) ?? "0.000"}s
+                        </td>
+                      ))}
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
       {selectedDebriefs.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Legend
-          </h3>
+          </h2>
 
           <div className="grid gap-2 md:grid-cols-2">
             {selectedDebriefs.map((debrief) => (
               <div
                 key={`legend-${debrief.id}`}
-                className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2"
+                className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${
+                  debrief.id === baselineId
+                    ? "border-white/20 bg-white/[0.06]"
+                    : "border-white/8 bg-white/[0.03]"
+                }`}
               >
                 <span
                   className="h-3 w-10 rounded-full"
                   style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
                 />
                 <div className="min-w-0">
-                  <div className="truncate text-sm text-white">{debrief.driver_name}</div>
+                  <div className="truncate text-sm text-white">
+                    {debrief.driver_name}
+                    {debrief.id === baselineId ? " (Baseline)" : ""}
+                  </div>
                   <div className="truncate text-xs text-white/50">
-                    {formatDebriefLabel(debrief)}
+                    {debrief.session_name} · {debrief.track_name} · {debrief.derived_year}
                   </div>
                 </div>
               </div>
