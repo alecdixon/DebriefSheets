@@ -48,14 +48,16 @@ type TrackTemplate = {
 };
 
 type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
+type ViewTab = "balanceComparison" | "balanceAnalysis";
 type CarColourMap = Record<string, string>;
-
 type SequentialPoint = {
   key: string;
   corner: number;
   phase: "entry" | "mid" | "exit";
   label: string;
 };
+
+type DeltaMap = Record<number, string>;
 
 const AVAILABLE_COLOURS = [
   "#ef4444",
@@ -98,7 +100,7 @@ function formatDebriefLabel(row: CleanedDebrief): string {
 
 function getPointValue(
   row: SubmittedCornerFeedback,
-  phaseMode: PhaseMode
+  phaseMode: Exclude<PhaseMode, "all">
 ): number | null {
   const entry = clampBalance(row.entryBalanceValue ?? null);
   const mid = clampBalance(row.midBalanceValue ?? null);
@@ -107,9 +109,7 @@ function getPointValue(
   if (phaseMode === "entry") return entry;
   if (phaseMode === "mid") return mid;
   if (phaseMode === "exit") return exit;
-  if (phaseMode === "average") return averageValid([entry, mid, exit]);
-
-  return null;
+  return averageValid([entry, mid, exit]);
 }
 
 function isValidTemplateCornerArray(value: unknown): value is TemplateCorner[] {
@@ -126,6 +126,16 @@ function isValidTemplateCornerArray(value: unknown): value is TemplateCorner[] {
   );
 }
 
+function formatBalanceCell(value: number | null): string {
+  if (value === null) return "—";
+  return value.toFixed(2);
+}
+
+function formatDeltaCell(value: number | null): string {
+  if (value === null) return "—";
+  return value.toFixed(3);
+}
+
 export default function CornerBalanceComparisonChart() {
   const [debriefs, setDebriefs] = useState<CleanedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,6 +148,9 @@ export default function CornerBalanceComparisonChart() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [phaseMode, setPhaseMode] = useState<PhaseMode>("average");
   const [carColours, setCarColours] = useState<CarColourMap>({});
+  const [activeTab, setActiveTab] = useState<ViewTab>("balanceComparison");
+
+  const [deltaByCorner, setDeltaByCorner] = useState<DeltaMap>({});
 
   const [trackTemplate, setTrackTemplate] = useState<TrackTemplate | null>(null);
   const [trackMapAspectRatio, setTrackMapAspectRatio] = useState<number>(1);
@@ -278,6 +291,16 @@ export default function CornerBalanceComparisonChart() {
     return Array.from(cornerSet).sort((a, b) => a - b);
   }, [selectedDebriefs]);
 
+  useEffect(() => {
+    setDeltaByCorner((prev) => {
+      const next: DeltaMap = {};
+      allCornerNumbers.forEach((corner) => {
+        next[corner] = prev[corner] ?? "";
+      });
+      return next;
+    });
+  }, [allCornerNumbers]);
+
   const sequentialXAxis = useMemo<SequentialPoint[]>(() => {
     if (phaseMode !== "all") return [];
 
@@ -362,6 +385,112 @@ export default function CornerBalanceComparisonChart() {
       [id]: colour,
     }));
   }
+
+  function updateDelta(corner: number, value: string) {
+    if (/^-?\d*\.?\d*$/.test(value) || value === "") {
+      setDeltaByCorner((prev) => ({
+        ...prev,
+        [corner]: value,
+      }));
+    }
+  }
+
+  const analysisRows = useMemo(() => {
+    return allCornerNumbers.map((corner) => {
+      const deltaRaw = deltaByCorner[corner] ?? "";
+      const parsedDelta =
+        deltaRaw.trim() === "" || Number.isNaN(Number(deltaRaw)) ? null : Number(deltaRaw);
+
+      const perDriver = selectedDebriefs.map((debrief) => {
+        const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
+
+        const entry = clampBalance(row?.entryBalanceValue ?? null);
+        const mid = clampBalance(row?.midBalanceValue ?? null);
+        const exit = clampBalance(row?.exitBalanceValue ?? null);
+        const average = averageValid([entry, mid, exit]);
+
+        return {
+          debriefId: debrief.id,
+          driverName: debrief.driver_name,
+          sessionName: debrief.session_name,
+          entry,
+          mid,
+          exit,
+          average,
+        };
+      });
+
+      return {
+        corner,
+        deltaRaw,
+        delta: parsedDelta,
+        perDriver,
+      };
+    });
+  }, [allCornerNumbers, deltaByCorner, selectedDebriefs]);
+
+  const deltaChartGeometry = {
+    width: Math.max(1180, 160 + allCornerNumbers.length * 72),
+    height: 420,
+    leftPadding: 86,
+    rightPadding: 28,
+    topPadding: 28,
+    bottomPadding: 66,
+  };
+
+  const deltaPlotWidth =
+    deltaChartGeometry.width - deltaChartGeometry.leftPadding - deltaChartGeometry.rightPadding;
+  const deltaPlotHeight =
+    deltaChartGeometry.height - deltaChartGeometry.topPadding - deltaChartGeometry.bottomPadding;
+
+  const deltaValues = analysisRows
+    .map((row) => row.delta)
+    .filter((value): value is number => value !== null);
+
+  const deltaMaxAbs = Math.max(
+    0.25,
+    ...deltaValues.map((value) => Math.abs(value))
+  );
+
+  const roundedDeltaMax = Math.ceil(deltaMaxAbs * 4) / 4;
+
+  const deltaTicks = [
+    -roundedDeltaMax,
+    -roundedDeltaMax / 2,
+    0,
+    roundedDeltaMax / 2,
+    roundedDeltaMax,
+  ];
+
+  function deltaXScale(cornerNumber: number): number {
+    if (allCornerNumbers.length <= 1) {
+      return deltaChartGeometry.leftPadding + deltaPlotWidth / 2;
+    }
+
+    const index = allCornerNumbers.findIndex((c) => c === cornerNumber);
+    const step = deltaPlotWidth / (allCornerNumbers.length - 1);
+    return deltaChartGeometry.leftPadding + index * step;
+  }
+
+  function deltaYScale(value: number): number {
+    const min = -roundedDeltaMax;
+    const max = roundedDeltaMax;
+    const normalized = (value - min) / (max - min || 1);
+    return deltaChartGeometry.topPadding + deltaPlotHeight - normalized * deltaPlotHeight;
+  }
+
+  const deltaPoints = analysisRows
+    .filter((row): row is typeof analysisRows[number] & { delta: number } => row.delta !== null)
+    .map((row) => ({
+      corner: row.corner,
+      delta: row.delta,
+      x: deltaXScale(row.corner),
+      y: deltaYScale(row.delta),
+    }));
+
+  const deltaPath = deltaPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
 
   if (loading) {
     return (
@@ -537,7 +666,32 @@ export default function CornerBalanceComparisonChart() {
         </div>
       )}
 
-      {trackFilter !== "all" && trackTemplate?.track_map_url && (
+      <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-2">
+        <div className="flex flex-wrap gap-2">
+          {[
+            { key: "balanceComparison", label: "Balance Comparison" },
+            { key: "balanceAnalysis", label: "Balance Analysis" },
+          ].map((tab) => {
+            const isActive = activeTab === tab.key;
+
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key as ViewTab)}
+                className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-white text-[#0b1220]"
+                    : "border border-white/10 bg-[#111827] text-white/70 hover:bg-white/10"
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {activeTab === "balanceComparison" && trackFilter !== "all" && trackTemplate?.track_map_url && (
         <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -589,198 +743,567 @@ export default function CornerBalanceComparisonChart() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-white/10 bg-[#09111f] p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
-              Balance Comparison Chart
-            </h3>
-            <p className="mt-1 text-xs text-white/45">
-              Major lines at whole steps, minor dashed lines at half steps.
-            </p>
-          </div>
+      {activeTab === "balanceComparison" && (
+        <div className="rounded-2xl border border-white/10 bg-[#09111f] p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Balance Comparison Chart
+              </h3>
+              <p className="mt-1 text-xs text-white/45">
+                Major lines at whole steps, minor dashed lines at half steps.
+              </p>
+            </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-xs text-white/55">
-            <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
-              Phase: {phaseMode}
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
-              Corners: {allCornerNumbers.length}
-            </span>
-            {phaseMode === "all" && (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-white/55">
               <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
-                Points: {sequentialXAxis.length}
+                Phase: {phaseMode}
               </span>
-            )}
+              <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
+                Corners: {allCornerNumbers.length}
+              </span>
+              {phaseMode === "all" && (
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
+                  Points: {sequentialXAxis.length}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
 
-        {selectedDebriefs.length === 0 ? (
-          <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
-            Select one or more debriefs to display the balance comparison chart.
-          </div>
-        ) : allCornerNumbers.length === 0 ? (
-          <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
-            No corner balance data found for the selected debriefs.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <svg
-              viewBox={`0 0 ${chartGeometry.width} ${chartGeometry.height}`}
-              className="min-w-[980px]"
-            >
-              <defs>
-                {selectedDebriefs.map((debrief) => {
-                  const colour = carColours[debrief.id] ?? "#3b82f6";
+          {selectedDebriefs.length === 0 ? (
+            <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
+              Select one or more debriefs to display the balance comparison chart.
+            </div>
+          ) : allCornerNumbers.length === 0 ? (
+            <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
+              No corner balance data found for the selected debriefs.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <svg
+                viewBox={`0 0 ${chartGeometry.width} ${chartGeometry.height}`}
+                className="min-w-[980px]"
+              >
+                <defs>
+                  {selectedDebriefs.map((debrief) => {
+                    const colour = carColours[debrief.id] ?? "#3b82f6";
+                    return (
+                      <filter
+                        id={`glow-${debrief.id}`}
+                        key={`glow-${debrief.id}`}
+                        x="-50%"
+                        y="-50%"
+                        width="200%"
+                        height="200%"
+                      >
+                        <feDropShadow
+                          dx="0"
+                          dy="0"
+                          stdDeviation="3"
+                          floodColor={colour}
+                          floodOpacity="0.45"
+                        />
+                      </filter>
+                    );
+                  })}
+                </defs>
+
+                <rect
+                  x={0}
+                  y={0}
+                  width={chartGeometry.width}
+                  height={chartGeometry.height}
+                  fill="#09111f"
+                  rx={18}
+                />
+
+                <rect
+                  x={chartGeometry.leftPadding}
+                  y={chartGeometry.topPadding}
+                  width={plotWidth}
+                  height={plotHeight}
+                  fill="#0d1628"
+                  stroke="rgba(255,255,255,0.08)"
+                  strokeWidth={1}
+                  rx={12}
+                />
+
+                {MINOR_TICKS.map((value) => {
+                  const y = yScale(value);
+
                   return (
-                    <filter
-                      id={`glow-${debrief.id}`}
-                      key={`glow-${debrief.id}`}
-                      x="-50%"
-                      y="-50%"
-                      width="200%"
-                      height="200%"
-                    >
-                      <feDropShadow
-                        dx="0"
-                        dy="0"
-                        stdDeviation="3"
-                        floodColor={colour}
-                        floodOpacity="0.45"
-                      />
-                    </filter>
-                  );
-                })}
-              </defs>
-
-              <rect
-                x={0}
-                y={0}
-                width={chartGeometry.width}
-                height={chartGeometry.height}
-                fill="#09111f"
-                rx={18}
-              />
-
-              <rect
-                x={chartGeometry.leftPadding}
-                y={chartGeometry.topPadding}
-                width={plotWidth}
-                height={plotHeight}
-                fill="#0d1628"
-                stroke="rgba(255,255,255,0.08)"
-                strokeWidth={1}
-                rx={12}
-              />
-
-              {MINOR_TICKS.map((value) => {
-                const y = yScale(value);
-
-                return (
-                  <line
-                    key={`minor-${value}`}
-                    x1={chartGeometry.leftPadding}
-                    x2={chartGeometry.leftPadding + plotWidth}
-                    y1={y}
-                    y2={y}
-                    stroke="rgba(255,255,255,0.11)"
-                    strokeWidth={1}
-                    strokeDasharray="4 6"
-                  />
-                );
-              })}
-
-              {MAJOR_TICKS.map((value) => {
-                const y = yScale(value);
-                const isZero = value === 0;
-
-                return (
-                  <g key={`major-${value}`}>
                     <line
+                      key={`minor-${value}`}
                       x1={chartGeometry.leftPadding}
                       x2={chartGeometry.leftPadding + plotWidth}
                       y1={y}
                       y2={y}
-                      stroke={isZero ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.18)"}
-                      strokeWidth={isZero ? 2.2 : 1.2}
+                      stroke="rgba(255,255,255,0.11)"
+                      strokeWidth={1}
+                      strokeDasharray="4 6"
                     />
-                    <text
-                      x={chartGeometry.leftPadding - 12}
-                      y={y + 4}
-                      textAnchor="end"
-                      fontSize="12"
-                      fill={isZero ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.55)"}
-                    >
-                      {yLabel(value)}
-                    </text>
-                  </g>
-                );
-              })}
+                  );
+                })}
 
-              {phaseMode === "all"
-                ? sequentialXAxis.map((point, index) => {
-                    const x = xScaleSequential(index);
-                    const isCornerStart = point.phase === "entry";
-                    const isCornerMid = point.phase === "mid";
-                    const isCornerEnd = point.phase === "exit";
+                {MAJOR_TICKS.map((value) => {
+                  const y = yScale(value);
+                  const isZero = value === 0;
 
-                    return (
-                      <g key={`seq-axis-${point.key}`}>
-                        <line
-                          x1={x}
-                          x2={x}
-                          y1={chartGeometry.topPadding}
-                          y2={chartGeometry.topPadding + plotHeight}
-                          stroke={
-                            isCornerStart
-                              ? "rgba(255,255,255,0.10)"
-                              : "rgba(255,255,255,0.05)"
-                          }
-                          strokeWidth={isCornerStart ? 1.2 : 1}
-                        />
-                        <text
-                          x={x}
-                          y={chartGeometry.topPadding + plotHeight + 24}
-                          textAnchor="middle"
-                          fontSize="11"
-                          fill={
-                            isCornerStart || isCornerEnd
-                              ? "rgba(255,255,255,0.72)"
-                              : "rgba(255,255,255,0.52)"
-                          }
-                        >
-                          {point.label}
-                        </text>
+                  return (
+                    <g key={`major-${value}`}>
+                      <line
+                        x1={chartGeometry.leftPadding}
+                        x2={chartGeometry.leftPadding + plotWidth}
+                        y1={y}
+                        y2={y}
+                        stroke={isZero ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.18)"}
+                        strokeWidth={isZero ? 2.2 : 1.2}
+                      />
+                      <text
+                        x={chartGeometry.leftPadding - 12}
+                        y={y + 4}
+                        textAnchor="end"
+                        fontSize="12"
+                        fill={isZero ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.55)"}
+                      >
+                        {yLabel(value)}
+                      </text>
+                    </g>
+                  );
+                })}
 
-                        {isCornerMid && (
+                {phaseMode === "all"
+                  ? sequentialXAxis.map((point, index) => {
+                      const x = xScaleSequential(index);
+                      const isCornerStart = point.phase === "entry";
+                      const isCornerMid = point.phase === "mid";
+                      const isCornerEnd = point.phase === "exit";
+
+                      return (
+                        <g key={`seq-axis-${point.key}`}>
+                          <line
+                            x1={x}
+                            x2={x}
+                            y1={chartGeometry.topPadding}
+                            y2={chartGeometry.topPadding + plotHeight}
+                            stroke={
+                              isCornerStart
+                                ? "rgba(255,255,255,0.10)"
+                                : "rgba(255,255,255,0.05)"
+                            }
+                            strokeWidth={isCornerStart ? 1.2 : 1}
+                          />
                           <text
                             x={x}
-                            y={chartGeometry.topPadding + plotHeight + 42}
+                            y={chartGeometry.topPadding + plotHeight + 24}
                             textAnchor="middle"
-                            fontSize="10"
-                            fill="rgba(255,255,255,0.35)"
+                            fontSize="11"
+                            fill={
+                              isCornerStart || isCornerEnd
+                                ? "rgba(255,255,255,0.72)"
+                                : "rgba(255,255,255,0.52)"
+                            }
                           >
-                            T{point.corner}
+                            {point.label}
                           </text>
-                        )}
+
+                          {isCornerMid && (
+                            <text
+                              x={x}
+                              y={chartGeometry.topPadding + plotHeight + 42}
+                              textAnchor="middle"
+                              fontSize="10"
+                              fill="rgba(255,255,255,0.35)"
+                            >
+                              T{point.corner}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })
+                  : allCornerNumbers.map((corner) => {
+                      const x = xScaleStandard(corner);
+                      return (
+                        <g key={`corner-${corner}`}>
+                          <line
+                            x1={x}
+                            x2={x}
+                            y1={chartGeometry.topPadding}
+                            y2={chartGeometry.topPadding + plotHeight}
+                            stroke="rgba(255,255,255,0.06)"
+                            strokeWidth={1}
+                          />
+                          <text
+                            x={x}
+                            y={chartGeometry.topPadding + plotHeight + 24}
+                            textAnchor="middle"
+                            fontSize="12"
+                            fill="rgba(255,255,255,0.72)"
+                          >
+                            T{corner}
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                {selectedDebriefs.map((debrief) => {
+                  const colour = carColours[debrief.id] ?? "#3b82f6";
+
+                  const points =
+                    phaseMode === "all"
+                      ? sequentialXAxis
+                          .map((seqPoint, index) => {
+                            const row = debrief.corner_feedback.find(
+                              (r) => r.cornerId === seqPoint.corner
+                            );
+                            if (!row) return null;
+
+                            let value: number | null = null;
+                            if (seqPoint.phase === "entry") {
+                              value = clampBalance(row.entryBalanceValue ?? null);
+                            }
+                            if (seqPoint.phase === "mid") {
+                              value = clampBalance(row.midBalanceValue ?? null);
+                            }
+                            if (seqPoint.phase === "exit") {
+                              value = clampBalance(row.exitBalanceValue ?? null);
+                            }
+
+                            if (value === null) return null;
+
+                            return {
+                              key: seqPoint.key,
+                              x: xScaleSequential(index),
+                              y: yScale(value),
+                              value,
+                              label: seqPoint.label,
+                            };
+                          })
+                          .filter(
+                            (
+                              point
+                            ): point is {
+                              key: string;
+                              x: number;
+                              y: number;
+                              value: number;
+                              label: string;
+                            } => Boolean(point)
+                          )
+                      : allCornerNumbers
+                          .map((corner) => {
+                            const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
+                            if (!row) return null;
+
+                            const value = getPointValue(
+                              row,
+                              phaseMode === "all" ? "average" : phaseMode
+                            );
+                            if (value === null) return null;
+
+                            return {
+                              key: `T${corner}`,
+                              x: xScaleStandard(corner),
+                              y: yScale(value),
+                              value,
+                              label: `T${corner}`,
+                            };
+                          })
+                          .filter(
+                            (
+                              point
+                            ): point is {
+                              key: string;
+                              x: number;
+                              y: number;
+                              value: number;
+                              label: string;
+                            } => Boolean(point)
+                          );
+
+                  const path = points
+                    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+                    .join(" ");
+
+                  return (
+                    <g key={`series-${debrief.id}`}>
+                      {points.length > 1 && (
+                        <path
+                          d={path}
+                          fill="none"
+                          stroke={colour}
+                          strokeWidth={3}
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                          filter={`url(#glow-${debrief.id})`}
+                        />
+                      )}
+
+                      {points.map((point) => (
+                        <g key={`point-${debrief.id}-${point.key}`}>
+                          <circle
+                            cx={point.x}
+                            cy={point.y}
+                            r={5.5}
+                            fill={colour}
+                            stroke="#07101d"
+                            strokeWidth={2}
+                          />
+                          <title>
+                            {`${debrief.driver_name} | ${point.label} | ${point.value.toFixed(2)}`}
+                          </title>
+                        </g>
+                      ))}
+                    </g>
+                  );
+                })}
+
+                <text
+                  x={chartGeometry.leftPadding}
+                  y={16}
+                  fontSize="13"
+                  fill="rgba(255,255,255,0.78)"
+                  fontWeight="600"
+                >
+                  Balance
+                </text>
+              </svg>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "balanceAnalysis" && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Turn Delta Input
+              </h3>
+              <p className="mt-1 text-xs text-white/45">
+                Enter the lap time delta for each turn. These values are shared across the selected
+                drivers on this analysis tab.
+              </p>
+            </div>
+
+            {selectedDebriefs.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm text-white/45">
+                Select one or more debriefs first.
+              </div>
+            ) : allCornerNumbers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm text-white/45">
+                No corner data available for the selected debriefs.
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+                {allCornerNumbers.map((corner) => (
+                  <div
+                    key={`delta-input-${corner}`}
+                    className="rounded-xl border border-white/8 bg-white/[0.03] p-3"
+                  >
+                    <label className="mb-2 block text-sm font-medium text-white/80">
+                      T{corner} Delta
+                    </label>
+                    <input
+                      type="text"
+                      value={deltaByCorner[corner] ?? ""}
+                      onChange={(e) => updateDelta(corner, e.target.value)}
+                      placeholder="e.g. 0.125"
+                      className="w-full rounded-lg border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Balance Analysis Table
+              </h3>
+              <p className="mt-1 text-xs text-white/45">
+                Entry, mid, exit, average balance, and user-entered delta by corner.
+              </p>
+            </div>
+
+            {selectedDebriefs.length === 0 || allCornerNumbers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm text-white/45">
+                No analysis data to show.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl">
+                  <thead>
+                    <tr>
+                      <th className="sticky left-0 z-10 border-b border-white/10 bg-[#101826] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
+                        Turn
+                      </th>
+                      {selectedDebriefs.map((debrief) => (
+                        <th
+                          key={`th-${debrief.id}`}
+                          colSpan={4}
+                          className="border-b border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60"
+                        >
+                          <div className="flex items-center justify-center gap-2">
+                            <span
+                              className="inline-block h-2.5 w-8 rounded-full"
+                              style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
+                            />
+                            <span>{debrief.driver_name}</span>
+                          </div>
+                        </th>
+                      ))}
+                      <th className="border-b border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/60">
+                        Delta
+                      </th>
+                    </tr>
+
+                    <tr>
+                      <th className="sticky left-0 z-10 border-b border-white/10 bg-[#101826] px-4 py-3 text-left text-xs text-white/45">
+                        Corner
+                      </th>
+                      {selectedDebriefs.map((debrief) => (
+                        <FragmentHeader key={`subhead-${debrief.id}`} />
+                      ))}
+                      <th className="border-b border-l border-white/10 bg-[#101826] px-4 py-3 text-center text-xs text-white/45">
+                        Input
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {analysisRows.map((row, index) => (
+                      <tr key={`analysis-row-${row.corner}`}>
+                        <td
+                          className={`sticky left-0 z-10 px-4 py-3 text-sm font-medium text-white ${
+                            index % 2 === 0 ? "bg-[#0d1522]" : "bg-[#0b1220]"
+                          }`}
+                        >
+                          T{row.corner}
+                        </td>
+
+                        {row.perDriver.map((driverRow) => (
+                          <FragmentCells
+                            key={`cells-${row.corner}-${driverRow.debriefId}`}
+                            entry={driverRow.entry}
+                            mid={driverRow.mid}
+                            exit={driverRow.exit}
+                            average={driverRow.average}
+                            striped={index % 2 === 0}
+                          />
+                        ))}
+
+                        <td
+                          className={`border-l border-white/10 px-4 py-3 text-center text-sm font-semibold ${
+                            index % 2 === 0 ? "bg-[#0d1522]" : "bg-[#0b1220]"
+                          } text-white`}
+                        >
+                          {formatDeltaCell(row.delta)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-[#09111f] p-4">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Delta by Turn
+              </h3>
+              <p className="mt-1 text-xs text-white/45">
+                Lap delta on the y-axis and turn number on the x-axis.
+              </p>
+            </div>
+
+            {selectedDebriefs.length === 0 || allCornerNumbers.length === 0 ? (
+              <div className="flex h-[320px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/45">
+                No delta chart data available.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <svg
+                  viewBox={`0 0 ${deltaChartGeometry.width} ${deltaChartGeometry.height}`}
+                  className="min-w-[980px]"
+                >
+                  <defs>
+                    <filter id="delta-glow" x="-50%" y="-50%" width="200%" height="200%">
+                      <feDropShadow
+                        dx="0"
+                        dy="0"
+                        stdDeviation="3"
+                        floodColor="#f59e0b"
+                        floodOpacity="0.45"
+                      />
+                    </filter>
+                  </defs>
+
+                  <rect
+                    x={0}
+                    y={0}
+                    width={deltaChartGeometry.width}
+                    height={deltaChartGeometry.height}
+                    fill="#09111f"
+                    rx={18}
+                  />
+
+                  <rect
+                    x={deltaChartGeometry.leftPadding}
+                    y={deltaChartGeometry.topPadding}
+                    width={deltaPlotWidth}
+                    height={deltaPlotHeight}
+                    fill="#0d1628"
+                    stroke="rgba(255,255,255,0.08)"
+                    strokeWidth={1}
+                    rx={12}
+                  />
+
+                  {deltaTicks.map((tick) => {
+                    const y = deltaYScale(tick);
+                    const isZero = tick === 0;
+
+                    return (
+                      <g key={`delta-tick-${tick}`}>
+                        <line
+                          x1={deltaChartGeometry.leftPadding}
+                          x2={deltaChartGeometry.leftPadding + deltaPlotWidth}
+                          y1={y}
+                          y2={y}
+                          stroke={isZero ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.16)"}
+                          strokeWidth={isZero ? 2 : 1}
+                          strokeDasharray={isZero ? undefined : "4 6"}
+                        />
+                        <text
+                          x={deltaChartGeometry.leftPadding - 12}
+                          y={y + 4}
+                          textAnchor="end"
+                          fontSize="12"
+                          fill={isZero ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.55)"}
+                        >
+                          {tick.toFixed(3)}
+                        </text>
                       </g>
                     );
-                  })
-                : allCornerNumbers.map((corner) => {
-                    const x = xScaleStandard(corner);
+                  })}
+
+                  {allCornerNumbers.map((corner) => {
+                    const x = deltaXScale(corner);
                     return (
-                      <g key={`corner-${corner}`}>
+                      <g key={`delta-corner-${corner}`}>
                         <line
                           x1={x}
                           x2={x}
-                          y1={chartGeometry.topPadding}
-                          y2={chartGeometry.topPadding + plotHeight}
+                          y1={deltaChartGeometry.topPadding}
+                          y2={deltaChartGeometry.topPadding + deltaPlotHeight}
                           stroke="rgba(255,255,255,0.06)"
                           strokeWidth={1}
                         />
                         <text
                           x={x}
-                          y={chartGeometry.topPadding + plotHeight + 24}
+                          y={deltaChartGeometry.topPadding + deltaPlotHeight + 24}
                           textAnchor="middle"
                           fontSize="12"
                           fill="rgba(255,255,255,0.72)"
@@ -791,130 +1314,49 @@ export default function CornerBalanceComparisonChart() {
                     );
                   })}
 
-              {selectedDebriefs.map((debrief) => {
-                const colour = carColours[debrief.id] ?? "#3b82f6";
+                  {deltaPoints.length > 1 && (
+                    <path
+                      d={deltaPath}
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth={3}
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                      filter="url(#delta-glow)"
+                    />
+                  )}
 
-                const points =
-                  phaseMode === "all"
-                    ? sequentialXAxis
-                        .map((seqPoint, index) => {
-                          const row = debrief.corner_feedback.find(
-                            (r) => r.cornerId === seqPoint.corner
-                          );
-                          if (!row) return null;
-
-                          let value: number | null = null;
-                          if (seqPoint.phase === "entry") {
-                            value = clampBalance(row.entryBalanceValue ?? null);
-                          }
-                          if (seqPoint.phase === "mid") {
-                            value = clampBalance(row.midBalanceValue ?? null);
-                          }
-                          if (seqPoint.phase === "exit") {
-                            value = clampBalance(row.exitBalanceValue ?? null);
-                          }
-
-                          if (value === null) return null;
-
-                          return {
-                            key: seqPoint.key,
-                            x: xScaleSequential(index),
-                            y: yScale(value),
-                            value,
-                            label: seqPoint.label,
-                          };
-                        })
-                        .filter(
-                          (
-                            point
-                          ): point is {
-                            key: string;
-                            x: number;
-                            y: number;
-                            value: number;
-                            label: string;
-                          } => Boolean(point)
-                        )
-                    : allCornerNumbers
-                        .map((corner) => {
-                          const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
-                          if (!row) return null;
-
-                          const value = getPointValue(row, phaseMode);
-                          if (value === null) return null;
-
-                          return {
-                            key: `T${corner}`,
-                            x: xScaleStandard(corner),
-                            y: yScale(value),
-                            value,
-                            label: `T${corner}`,
-                          };
-                        })
-                        .filter(
-                          (
-                            point
-                          ): point is {
-                            key: string;
-                            x: number;
-                            y: number;
-                            value: number;
-                            label: string;
-                          } => Boolean(point)
-                        );
-
-                const path = points
-                  .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-                  .join(" ");
-
-                return (
-                  <g key={`series-${debrief.id}`}>
-                    {points.length > 1 && (
-                      <path
-                        d={path}
-                        fill="none"
-                        stroke={colour}
-                        strokeWidth={3}
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                        filter={`url(#glow-${debrief.id})`}
+                  {deltaPoints.map((point) => (
+                    <g key={`delta-point-${point.corner}`}>
+                      <circle
+                        cx={point.x}
+                        cy={point.y}
+                        r={5.5}
+                        fill="#f59e0b"
+                        stroke="#07101d"
+                        strokeWidth={2}
                       />
-                    )}
+                      <title>{`T${point.corner} | ${point.delta.toFixed(3)}`}</title>
+                    </g>
+                  ))}
 
-                    {points.map((point) => (
-                      <g key={`point-${debrief.id}-${point.key}`}>
-                        <circle
-                          cx={point.x}
-                          cy={point.y}
-                          r={5.5}
-                          fill={colour}
-                          stroke="#07101d"
-                          strokeWidth={2}
-                        />
-                        <title>
-                          {`${debrief.driver_name} | ${point.label} | ${point.value.toFixed(2)}`}
-                        </title>
-                      </g>
-                    ))}
-                  </g>
-                );
-              })}
-
-              <text
-                x={chartGeometry.leftPadding}
-                y={16}
-                fontSize="13"
-                fill="rgba(255,255,255,0.78)"
-                fontWeight="600"
-              >
-                Balance
-              </text>
-            </svg>
+                  <text
+                    x={deltaChartGeometry.leftPadding}
+                    y={16}
+                    fontSize="13"
+                    fill="rgba(255,255,255,0.78)"
+                    fontWeight="600"
+                  >
+                    Delta
+                  </text>
+                </svg>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {selectedDebriefs.length > 0 && (
+      {selectedDebriefs.length > 0 && activeTab === "balanceComparison" && (
         <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Legend
@@ -942,5 +1384,57 @@ export default function CornerBalanceComparisonChart() {
         </div>
       )}
     </div>
+  );
+}
+
+function FragmentHeader() {
+  return (
+    <>
+      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+        Entry
+      </th>
+      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+        Mid
+      </th>
+      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+        Exit
+      </th>
+      <th className="border-b border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
+        Avg
+      </th>
+    </>
+  );
+}
+
+function FragmentCells({
+  entry,
+  mid,
+  exit,
+  average,
+  striped,
+}: {
+  entry: number | null;
+  mid: number | null;
+  exit: number | null;
+  average: number | null;
+  striped: boolean;
+}) {
+  const bgClass = striped ? "bg-[#0d1522]" : "bg-[#0b1220]";
+
+  return (
+    <>
+      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm text-white/85 ${bgClass}`}>
+        {formatBalanceCell(entry)}
+      </td>
+      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm text-white/85 ${bgClass}`}>
+        {formatBalanceCell(mid)}
+      </td>
+      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm text-white/85 ${bgClass}`}>
+        {formatBalanceCell(exit)}
+      </td>
+      <td className={`border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white ${bgClass}`}>
+        {formatBalanceCell(average)}
+      </td>
+    </>
   );
 }
