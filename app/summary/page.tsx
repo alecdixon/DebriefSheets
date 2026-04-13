@@ -33,6 +33,20 @@ type CleanedDebrief = {
   derived_year: string;
 };
 
+type TemplateCorner = {
+  id: number;
+  x: number;
+  y: number;
+};
+
+type TrackTemplate = {
+  id: string;
+  track_name: string;
+  team: string;
+  track_map_url: string | null;
+  corners: TemplateCorner[];
+};
+
 type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
 type CarColourMap = Record<string, string>;
 
@@ -98,6 +112,20 @@ function getPointValue(
   return null;
 }
 
+function isValidTemplateCornerArray(value: unknown): value is TemplateCorner[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (corner) =>
+        typeof corner === "object" &&
+        corner !== null &&
+        typeof (corner as TemplateCorner).id === "number" &&
+        typeof (corner as TemplateCorner).x === "number" &&
+        typeof (corner as TemplateCorner).y === "number"
+    )
+  );
+}
+
 export default function CornerBalanceComparisonChart() {
   const [debriefs, setDebriefs] = useState<CleanedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +138,9 @@ export default function CornerBalanceComparisonChart() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [phaseMode, setPhaseMode] = useState<PhaseMode>("average");
   const [carColours, setCarColours] = useState<CarColourMap>({});
+
+  const [trackTemplate, setTrackTemplate] = useState<TrackTemplate | null>(null);
+  const [trackMapAspectRatio, setTrackMapAspectRatio] = useState<number>(1);
 
   useEffect(() => {
     async function loadDebriefs() {
@@ -184,6 +215,51 @@ export default function CornerBalanceComparisonChart() {
     setSelectedIds((prev) => prev.filter((id) => filteredDebriefs.some((d) => d.id === id)));
   }, [filteredDebriefs]);
 
+  useEffect(() => {
+    async function loadTrackTemplate() {
+      if (trackFilter === "all") {
+        setTrackTemplate(null);
+        setTrackMapAspectRatio(1);
+        return;
+      }
+
+      const inferredTeam =
+        teamFilter !== "all"
+          ? teamFilter
+          : filteredDebriefs.find((d) => d.track_name === trackFilter)?.team ?? null;
+
+      let query = supabase
+        .from("debrief_templates")
+        .select("id, track_name, team, track_map_url, corners")
+        .eq("track_name", trackFilter);
+
+      if (inferredTeam) {
+        query = query.eq("team", inferredTeam);
+      }
+
+      const { data, error: templateError } = await query.limit(1).maybeSingle();
+
+      if (templateError || !data) {
+        setTrackTemplate(null);
+        setTrackMapAspectRatio(1);
+        return;
+      }
+
+      setTrackTemplate({
+        id: String(data.id),
+        track_name: String(data.track_name ?? ""),
+        team: String(data.team ?? ""),
+        track_map_url:
+          typeof data.track_map_url === "string" && data.track_map_url.trim()
+            ? data.track_map_url.trim()
+            : null,
+        corners: isValidTemplateCornerArray(data.corners) ? data.corners : [],
+      });
+    }
+
+    loadTrackTemplate();
+  }, [trackFilter, teamFilter, filteredDebriefs]);
+
   const selectedDebriefs = useMemo(() => {
     return filteredDebriefs.filter((d) => selectedIds.includes(d.id));
   }, [filteredDebriefs, selectedIds]);
@@ -234,12 +310,7 @@ export default function CornerBalanceComparisonChart() {
   }, [allCornerNumbers, phaseMode]);
 
   const chartGeometry = {
-    width: Math.max(
-      1180,
-      phaseMode === "all"
-        ? 140 + sequentialXAxis.length * 40
-        : 1180
-    ),
+    width: Math.max(1180, phaseMode === "all" ? 140 + sequentialXAxis.length * 40 : 1180),
     height: 520,
     leftPadding: 86,
     rightPadding: 28,
@@ -384,9 +455,7 @@ export default function CornerBalanceComparisonChart() {
           <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Available Debriefs
           </h3>
-          <span className="text-xs text-white/45">
-            {selectedDebriefs.length} selected
-          </span>
+          <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
         </div>
 
         <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
@@ -409,9 +478,7 @@ export default function CornerBalanceComparisonChart() {
                   className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent"
                 />
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-white">
-                    {row.driver_name}
-                  </div>
+                  <div className="truncate text-sm font-medium text-white">{row.driver_name}</div>
                   <div className="truncate text-xs text-white/55">
                     {row.session_name} · {row.track_name} · {row.team} · {row.derived_year}
                   </div>
@@ -446,9 +513,7 @@ export default function CornerBalanceComparisonChart() {
                 className="flex items-center justify-between rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3"
               >
                 <div className="min-w-0 pr-4">
-                  <div className="truncate text-sm font-medium text-white">
-                    {row.driver_name}
-                  </div>
+                  <div className="truncate text-sm font-medium text-white">{row.driver_name}</div>
                   <div className="truncate text-xs text-white/50">
                     {row.session_name} · {row.track_name}
                   </div>
@@ -468,6 +533,58 @@ export default function CornerBalanceComparisonChart() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {trackFilter !== "all" && trackTemplate?.track_map_url && (
+        <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                Track Map
+              </h3>
+              <p className="mt-1 text-xs text-white/45">
+                {trackTemplate.track_name}
+                {trackTemplate.team ? ` · ${trackTemplate.team}` : ""}
+              </p>
+            </div>
+
+            <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-white/55">
+              {trackTemplate.corners.length} corners
+            </div>
+          </div>
+
+          <div className="mx-auto w-full max-w-[760px]">
+            <div
+              className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-[#09111f]"
+              style={{ aspectRatio: String(trackMapAspectRatio) }}
+            >
+              <img
+                src={trackTemplate.track_map_url}
+                alt={`${trackTemplate.track_name} track map`}
+                className="absolute inset-0 h-full w-full object-contain"
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                    setTrackMapAspectRatio(img.naturalWidth / img.naturalHeight);
+                  }
+                }}
+              />
+
+              {trackTemplate.corners.map((corner) => (
+                <div
+                  key={corner.id}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-[#141A22]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-lg"
+                  style={{
+                    left: `${corner.x}%`,
+                    top: `${corner.y}%`,
+                  }}
+                >
+                  T{corner.id}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -814,9 +931,7 @@ export default function CornerBalanceComparisonChart() {
                   style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
                 />
                 <div className="min-w-0">
-                  <div className="truncate text-sm text-white">
-                    {debrief.driver_name}
-                  </div>
+                  <div className="truncate text-sm text-white">{debrief.driver_name}</div>
                   <div className="truncate text-xs text-white/50">
                     {formatDebriefLabel(debrief)}
                   </div>
