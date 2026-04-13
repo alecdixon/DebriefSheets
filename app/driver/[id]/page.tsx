@@ -155,7 +155,7 @@ function BalanceSlider({
         step={0.5}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-5 accent-[#E10600] cursor-pointer"
+        className="w-full h-5 cursor-pointer appearance-none rounded-lg bg-[#1F2937] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-8 [&::-webkit-slider-thumb]:w-8 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#E10600] [&::-webkit-slider-thumb]:shadow-lg"
       />
 
       <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] text-[#9CA3AF] sm:text-xs">
