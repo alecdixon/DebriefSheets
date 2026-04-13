@@ -34,6 +34,8 @@ type CleanedDebrief = {
 };
 
 type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
+type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
+type SeriesPhase = "entry" | "mid" | "exit" | "average";
 type CarColourMap = Record<string, string>;
 
 const AVAILABLE_COLOURS = [
@@ -58,14 +60,16 @@ function clampBalance(value: number | null | undefined): number | null {
 }
 
 function averageValid(values: Array<number | null | undefined>): number | null {
-  const valid = values.filter((v): v is number => v !== null && v !== undefined && !Number.isNaN(v));
+  const valid = values.filter(
+    (v): v is number => v !== null && v !== undefined && !Number.isNaN(v)
+  );
   if (!valid.length) return null;
   return valid.reduce((sum, v) => sum + v, 0) / valid.length;
 }
 
 function buildSeriesMap(
   debrief: CleanedDebrief,
-  phaseMode: "entry" | "mid" | "exit" | "average"
+  phaseMode: SeriesPhase
 ): Map<number, number | null> {
   const map = new Map<number, number | null>();
 
@@ -97,6 +101,32 @@ function formatDebriefLabel(row: CleanedDebrief): string {
   return `${row.driver_name} | ${row.session_name} | ${row.track_name} | ${row.derived_year}`;
 }
 
+function getPhaseLabel(phase: SeriesPhase): string {
+  if (phase === "entry") return "Entry";
+  if (phase === "mid") return "Mid";
+  if (phase === "exit") return "Exit";
+  return "Average";
+}
+
+function getPhaseStrokeDasharray(phase: SeriesPhase): string | undefined {
+  if (phase === "entry") return "10 6";
+  if (phase === "mid") return undefined;
+  if (phase === "exit") return "2 6";
+  return undefined;
+}
+
+function getPhasePointRadius(phase: SeriesPhase): number {
+  if (phase === "entry") return 5.5;
+  if (phase === "mid") return 5;
+  if (phase === "exit") return 4.5;
+  return 5.5;
+}
+
+function getSeriesPhases(phaseMode: PhaseMode): SeriesPhase[] {
+  if (phaseMode === "all") return ["entry", "mid", "exit"];
+  return [phaseMode];
+}
+
 export default function CornerBalanceComparisonChart() {
   const [debriefs, setDebriefs] = useState<CleanedDebrief[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +137,7 @@ export default function CornerBalanceComparisonChart() {
   const [trackFilter, setTrackFilter] = useState("all");
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [phaseMode, setPhaseMode] = useState<"entry" | "mid" | "exit" | "average">("average");
+  const [phaseMode, setPhaseMode] = useState<PhaseMode>("average");
   const [carColours, setCarColours] = useState<CarColourMap>({});
 
   useEffect(() => {
@@ -180,7 +210,9 @@ export default function CornerBalanceComparisonChart() {
   }, [debriefs, teamFilter, yearFilter, trackFilter]);
 
   useEffect(() => {
-    setSelectedIds((prev) => prev.filter((id) => filteredDebriefs.some((d) => d.id === id)));
+    setSelectedIds((prev) =>
+      prev.filter((id) => filteredDebriefs.some((d) => d.id === id))
+    );
   }, [filteredDebriefs]);
 
   const selectedDebriefs = useMemo(() => {
@@ -262,6 +294,8 @@ export default function CornerBalanceComparisonChart() {
     );
   }
 
+  const visibleSeriesPhases = getSeriesPhases(phaseMode);
+
   return (
     <div className="space-y-6 rounded-2xl border border-white/10 bg-[#0b1220] p-6 text-white shadow-2xl">
       <div>
@@ -321,11 +355,10 @@ export default function CornerBalanceComparisonChart() {
           <label className="mb-2 block text-sm font-medium text-white/75">Phase</label>
           <select
             value={phaseMode}
-            onChange={(e) =>
-              setPhaseMode(e.target.value as "entry" | "mid" | "exit" | "average")
-            }
+            onChange={(e) => setPhaseMode(e.target.value as PhaseMode)}
             className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
           >
+            <option value="all">All</option>
             <option value="average">Average</option>
             <option value="entry">Entry</option>
             <option value="mid">Mid</option>
@@ -339,9 +372,7 @@ export default function CornerBalanceComparisonChart() {
           <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Available Debriefs
           </h3>
-          <span className="text-xs text-white/45">
-            {selectedDebriefs.length} selected
-          </span>
+          <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
         </div>
 
         <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
@@ -390,7 +421,7 @@ export default function CornerBalanceComparisonChart() {
               Car Colours
             </h3>
             <p className="mt-1 text-xs text-white/45">
-              Select the line colour for each selected car before the chart.
+              Select the base colour for each selected car before the chart.
             </p>
           </div>
 
@@ -463,21 +494,31 @@ export default function CornerBalanceComparisonChart() {
               className="min-w-[980px]"
             >
               <defs>
-                {selectedDebriefs.map((debrief) => {
-                  const colour = carColours[debrief.id] ?? "#3b82f6";
-                  return (
-                    <filter
-                      id={`glow-${debrief.id}`}
-                      key={`glow-${debrief.id}`}
-                      x="-50%"
-                      y="-50%"
-                      width="200%"
-                      height="200%"
-                    >
-                      <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor={colour} floodOpacity="0.45" />
-                    </filter>
-                  );
-                })}
+                {selectedDebriefs.flatMap((debrief) =>
+                  visibleSeriesPhases.map((phase) => {
+                    const colour = carColours[debrief.id] ?? "#3b82f6";
+                    const filterId = `glow-${debrief.id}-${phase}`;
+
+                    return (
+                      <filter
+                        id={filterId}
+                        key={filterId}
+                        x="-50%"
+                        y="-50%"
+                        width="200%"
+                        height="200%"
+                      >
+                        <feDropShadow
+                          dx="0"
+                          dy="0"
+                          stdDeviation="3"
+                          floodColor={colour}
+                          floodOpacity="0.45"
+                        />
+                      </filter>
+                    );
+                  })
+                )}
               </defs>
 
               <rect
@@ -569,59 +610,73 @@ export default function CornerBalanceComparisonChart() {
                 );
               })}
 
-              {selectedDebriefs.map((debrief) => {
-                const seriesMap = buildSeriesMap(debrief, phaseMode);
-                const points = allCornerNumbers
-                  .map((corner) => {
-                    const value = seriesMap.get(corner);
-                    if (value === null || value === undefined) return null;
-                    return {
-                      corner,
-                      x: xScale(corner),
-                      y: yScale(value),
-                      value,
-                    };
-                  })
-                  .filter((point): point is { corner: number; x: number; y: number; value: number } => Boolean(point));
+              {selectedDebriefs.flatMap((debrief) =>
+                visibleSeriesPhases.map((phase) => {
+                  const seriesMap = buildSeriesMap(debrief, phase);
+                  const points = allCornerNumbers
+                    .map((corner) => {
+                      const value = seriesMap.get(corner);
+                      if (value === null || value === undefined) return null;
+                      return {
+                        corner,
+                        x: xScale(corner),
+                        y: yScale(value),
+                        value,
+                      };
+                    })
+                    .filter(
+                      (
+                        point
+                      ): point is { corner: number; x: number; y: number; value: number } =>
+                        Boolean(point)
+                    );
 
-                const colour = carColours[debrief.id] ?? "#3b82f6";
+                  const colour = carColours[debrief.id] ?? "#3b82f6";
+                  const dasharray = getPhaseStrokeDasharray(phase);
+                  const radius = getPhasePointRadius(phase);
 
-                const path = points
-                  .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-                  .join(" ");
+                  const path = points
+                    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+                    .join(" ");
 
-                return (
-                  <g key={`series-${debrief.id}`}>
-                    {points.length > 1 && (
-                      <path
-                        d={path}
-                        fill="none"
-                        stroke={colour}
-                        strokeWidth={3}
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                        filter={`url(#glow-${debrief.id})`}
-                      />
-                    )}
+                  const filterId = `glow-${debrief.id}-${phase}`;
 
-                    {points.map((point) => (
-                      <g key={`point-${debrief.id}-${point.corner}`}>
-                        <circle
-                          cx={point.x}
-                          cy={point.y}
-                          r={5.5}
-                          fill={colour}
-                          stroke="#07101d"
-                          strokeWidth={2}
+                  return (
+                    <g key={`series-${debrief.id}-${phase}`}>
+                      {points.length > 1 && (
+                        <path
+                          d={path}
+                          fill="none"
+                          stroke={colour}
+                          strokeWidth={phaseMode === "all" ? 2.5 : 3}
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                          strokeDasharray={dasharray}
+                          filter={`url(#${filterId})`}
+                          opacity={phaseMode === "all" ? 0.95 : 1}
                         />
-                        <title>
-                          {`${debrief.driver_name} | T${point.corner} | ${point.value.toFixed(2)}`}
-                        </title>
-                      </g>
-                    ))}
-                  </g>
-                );
-              })}
+                      )}
+
+                      {points.map((point) => (
+                        <g key={`point-${debrief.id}-${phase}-${point.corner}`}>
+                          <circle
+                            cx={point.x}
+                            cy={point.y}
+                            r={radius}
+                            fill={colour}
+                            stroke="#07101d"
+                            strokeWidth={2}
+                            opacity={phaseMode === "all" ? 0.95 : 1}
+                          />
+                          <title>
+                            {`${debrief.driver_name} | ${getPhaseLabel(phase)} | T${point.corner} | ${point.value.toFixed(2)}`}
+                          </title>
+                        </g>
+                      ))}
+                    </g>
+                  );
+                })
+              )}
 
               <text
                 x={chartGeometry.leftPadding}
@@ -647,20 +702,45 @@ export default function CornerBalanceComparisonChart() {
             {selectedDebriefs.map((debrief) => (
               <div
                 key={`legend-${debrief.id}`}
-                className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2"
+                className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3"
               >
-                <span
-                  className="h-3 w-10 rounded-full"
-                  style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
-                />
-                <div className="min-w-0">
-                  <div className="truncate text-sm text-white">
-                    {debrief.driver_name}
-                  </div>
-                  <div className="truncate text-xs text-white/50">
-                    {formatDebriefLabel(debrief)}
+                <div className="flex items-center gap-3">
+                  <span
+                    className="h-3 w-10 rounded-full"
+                    style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
+                  />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm text-white">{debrief.driver_name}</div>
+                    <div className="truncate text-xs text-white/50">
+                      {formatDebriefLabel(debrief)}
+                    </div>
                   </div>
                 </div>
+
+                {phaseMode === "all" && (
+                  <div className="mt-3 space-y-2 pl-1">
+                    {(["entry", "mid", "exit"] as SeriesPhase[]).map((phase) => (
+                      <div
+                        key={`legend-phase-${debrief.id}-${phase}`}
+                        className="flex items-center gap-3 text-xs text-white/65"
+                      >
+                        <svg width="42" height="10" viewBox="0 0 42 10" className="shrink-0">
+                          <line
+                            x1="2"
+                            y1="5"
+                            x2="40"
+                            y2="5"
+                            stroke={carColours[debrief.id] ?? "#3b82f6"}
+                            strokeWidth="2.5"
+                            strokeDasharray={getPhaseStrokeDasharray(phase)}
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        <span>{getPhaseLabel(phase)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
