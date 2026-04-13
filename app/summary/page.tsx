@@ -19,7 +19,6 @@ type SubmittedDebrief = {
   track_name?: string | null;
   created_at?: string | null;
   corner_feedback?: SubmittedCornerFeedback[] | null;
-  year?: number | string | null;
   [key: string]: unknown;
 };
 
@@ -118,7 +117,7 @@ export default function CornerBalanceComparisonChart() {
 
       const { data, error: supabaseError } = await supabase
         .from("submitted_debriefs")
-        .select("id, team, driver_name, session_name, track_name, created_at, corner_feedback, year")
+        .select("id, team, driver_name, session_name, track_name, created_at, corner_feedback")
         .order("created_at", { ascending: false });
 
       if (supabaseError) {
@@ -129,9 +128,9 @@ export default function CornerBalanceComparisonChart() {
 
       const cleaned: CleanedDebrief[] = (data ?? []).map((row: SubmittedDebrief) => {
         const createdAt = row.created_at ?? "";
-        const derivedYear =
-          row.year?.toString()?.trim() ||
-          (createdAt ? new Date(createdAt).getFullYear().toString() : "Unknown");
+        const derivedYear = createdAt
+          ? new Date(createdAt).getFullYear().toString()
+          : "Unknown";
 
         return {
           id: String(row.id),
