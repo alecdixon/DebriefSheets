@@ -1180,28 +1180,38 @@ export default function SummaryPage() {
                     })}
                   </div>
 
-                      <div key={debrief.id} className="flex items-center gap-3">
-  <input
-    type="color"
-    value={colour}
-    onChange={(e) =>
-      setDriverColours((prev) => ({
-        ...prev,
-        [debrief.id]: e.target.value,
-      }))
-    }
-    className="h-8 w-8 cursor-pointer rounded border border-[#2A3441] bg-transparent"
-  />
+                      <div className="mt-4 flex flex-wrap items-center gap-4">
+                        {selectedDebriefs.map((debrief, index) => {
+                          const colour = getDriverColour(debrief.id, index);
 
-  <span
-    className="inline-block h-3 w-3 rounded-full"
-    style={{ backgroundColor: colour }}
-  />
+                          return (
+                            <div key={debrief.id} className="flex items-center gap-3">
+                              <input
+                               type="color"
+                                value={colour}
+                                onChange={(e) =>
+                                  setDriverColours((prev) => ({
+                                    ...prev,
+                                    [debrief.id]: e.target.value,
+                                  }))
+                                }
+                                className="h-8 w-8 cursor-pointer rounded border border-[#2A3441] bg-transparent"
+                              />
 
-  <span className="text-sm text-white">
-    {safeText(debrief.driver_name)} — {safeText(debrief.session_name)}
-  </span>
-</div>
+                              <span
+                                className="inline-block h-3 w-3 rounded-full"
+                                style={{ backgroundColor: colour }}
+                              />
+
+                              <span className="text-sm text-white">
+                                {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
+                                {safeText(debrief.session_name, "No Session")}
+                                {debrief.id === baselineDebriefId ? " (Baseline)" : ""}
+                              </span>
+                            </div>
+                          );
+                        })} 
+                      </div>
 
                   <div className="mt-6 overflow-x-auto print:overflow-visible">
                     <div className="min-w-[1900px] rounded-2xl border border-[#2A3441] bg-[#111827] print:min-w-0 print:border-[#d1d5db] print:bg-white">
