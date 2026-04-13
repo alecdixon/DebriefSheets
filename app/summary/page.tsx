@@ -33,10 +33,15 @@ type CleanedDebrief = {
   derived_year: string;
 };
 
-type PhaseKey = "entryBalanceValue" | "midBalanceValue" | "exitBalanceValue";
 type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
-type SeriesPhase = "entry" | "mid" | "exit" | "average";
 type CarColourMap = Record<string, string>;
+
+type SequentialPoint = {
+  key: string;
+  corner: number;
+  phase: "entry" | "mid" | "exit";
+  label: string;
+};
 
 const AVAILABLE_COLOURS = [
   "#ef4444",
@@ -67,30 +72,6 @@ function averageValid(values: Array<number | null | undefined>): number | null {
   return valid.reduce((sum, v) => sum + v, 0) / valid.length;
 }
 
-function buildSeriesMap(
-  debrief: CleanedDebrief,
-  phaseMode: SeriesPhase
-): Map<number, number | null> {
-  const map = new Map<number, number | null>();
-
-  for (const row of debrief.corner_feedback) {
-    const entry = clampBalance(row.entryBalanceValue ?? null);
-    const mid = clampBalance(row.midBalanceValue ?? null);
-    const exit = clampBalance(row.exitBalanceValue ?? null);
-
-    let value: number | null = null;
-
-    if (phaseMode === "entry") value = entry;
-    if (phaseMode === "mid") value = mid;
-    if (phaseMode === "exit") value = exit;
-    if (phaseMode === "average") value = averageValid([entry, mid, exit]);
-
-    map.set(row.cornerId, value);
-  }
-
-  return map;
-}
-
 function yLabel(value: number): string {
   if (value === 0) return "OK";
   if (value < 0) return `US ${Math.abs(value)}`;
@@ -101,30 +82,20 @@ function formatDebriefLabel(row: CleanedDebrief): string {
   return `${row.driver_name} | ${row.session_name} | ${row.track_name} | ${row.derived_year}`;
 }
 
-function getPhaseLabel(phase: SeriesPhase): string {
-  if (phase === "entry") return "Entry";
-  if (phase === "mid") return "Mid";
-  if (phase === "exit") return "Exit";
-  return "Average";
-}
+function getPointValue(
+  row: SubmittedCornerFeedback,
+  phaseMode: PhaseMode
+): number | null {
+  const entry = clampBalance(row.entryBalanceValue ?? null);
+  const mid = clampBalance(row.midBalanceValue ?? null);
+  const exit = clampBalance(row.exitBalanceValue ?? null);
 
-function getPhaseStrokeDasharray(phase: SeriesPhase): string | undefined {
-  if (phase === "entry") return "10 6";
-  if (phase === "mid") return undefined;
-  if (phase === "exit") return "2 6";
-  return undefined;
-}
+  if (phaseMode === "entry") return entry;
+  if (phaseMode === "mid") return mid;
+  if (phaseMode === "exit") return exit;
+  if (phaseMode === "average") return averageValid([entry, mid, exit]);
 
-function getPhasePointRadius(phase: SeriesPhase): number {
-  if (phase === "entry") return 5.5;
-  if (phase === "mid") return 5;
-  if (phase === "exit") return 4.5;
-  return 5.5;
-}
-
-function getSeriesPhases(phaseMode: PhaseMode): SeriesPhase[] {
-  if (phaseMode === "all") return ["entry", "mid", "exit"];
-  return [phaseMode];
+  return null;
 }
 
 export default function CornerBalanceComparisonChart() {
@@ -210,9 +181,7 @@ export default function CornerBalanceComparisonChart() {
   }, [debriefs, teamFilter, yearFilter, trackFilter]);
 
   useEffect(() => {
-    setSelectedIds((prev) =>
-      prev.filter((id) => filteredDebriefs.some((d) => d.id === id))
-    );
+    setSelectedIds((prev) => prev.filter((id) => filteredDebriefs.some((d) => d.id === id)));
   }, [filteredDebriefs]);
 
   const selectedDebriefs = useMemo(() => {
@@ -233,13 +202,49 @@ export default function CornerBalanceComparisonChart() {
     return Array.from(cornerSet).sort((a, b) => a - b);
   }, [selectedDebriefs]);
 
+  const sequentialXAxis = useMemo<SequentialPoint[]>(() => {
+    if (phaseMode !== "all") return [];
+
+    const points: SequentialPoint[] = [];
+
+    allCornerNumbers.forEach((corner) => {
+      points.push(
+        {
+          key: `T${corner}-entry`,
+          corner,
+          phase: "entry",
+          label: `T${corner}E`,
+        },
+        {
+          key: `T${corner}-mid`,
+          corner,
+          phase: "mid",
+          label: `T${corner}M`,
+        },
+        {
+          key: `T${corner}-exit`,
+          corner,
+          phase: "exit",
+          label: `T${corner}X`,
+        }
+      );
+    });
+
+    return points;
+  }, [allCornerNumbers, phaseMode]);
+
   const chartGeometry = {
-    width: 1180,
+    width: Math.max(
+      1180,
+      phaseMode === "all"
+        ? 140 + sequentialXAxis.length * 40
+        : 1180
+    ),
     height: 520,
     leftPadding: 86,
     rightPadding: 28,
     topPadding: 28,
-    bottomPadding: 70,
+    bottomPadding: 78,
   };
 
   const plotWidth =
@@ -247,13 +252,22 @@ export default function CornerBalanceComparisonChart() {
   const plotHeight =
     chartGeometry.height - chartGeometry.topPadding - chartGeometry.bottomPadding;
 
-  function xScale(cornerNumber: number): number {
+  function xScaleStandard(cornerNumber: number): number {
     if (allCornerNumbers.length <= 1) {
       return chartGeometry.leftPadding + plotWidth / 2;
     }
 
     const index = allCornerNumbers.findIndex((c) => c === cornerNumber);
     const step = plotWidth / (allCornerNumbers.length - 1);
+    return chartGeometry.leftPadding + index * step;
+  }
+
+  function xScaleSequential(index: number): number {
+    if (sequentialXAxis.length <= 1) {
+      return chartGeometry.leftPadding + plotWidth / 2;
+    }
+
+    const step = plotWidth / (sequentialXAxis.length - 1);
     return chartGeometry.leftPadding + index * step;
   }
 
@@ -293,8 +307,6 @@ export default function CornerBalanceComparisonChart() {
       </div>
     );
   }
-
-  const visibleSeriesPhases = getSeriesPhases(phaseMode);
 
   return (
     <div className="space-y-6 rounded-2xl border border-white/10 bg-[#0b1220] p-6 text-white shadow-2xl">
@@ -372,7 +384,9 @@ export default function CornerBalanceComparisonChart() {
           <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Available Debriefs
           </h3>
-          <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
+          <span className="text-xs text-white/45">
+            {selectedDebriefs.length} selected
+          </span>
         </div>
 
         <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
@@ -421,7 +435,7 @@ export default function CornerBalanceComparisonChart() {
               Car Colours
             </h3>
             <p className="mt-1 text-xs text-white/45">
-              Select the base colour for each selected car before the chart.
+              Select the line colour for each selected car before the chart.
             </p>
           </div>
 
@@ -476,6 +490,11 @@ export default function CornerBalanceComparisonChart() {
             <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
               Corners: {allCornerNumbers.length}
             </span>
+            {phaseMode === "all" && (
+              <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1">
+                Points: {sequentialXAxis.length}
+              </span>
+            )}
           </div>
         </div>
 
@@ -494,31 +513,27 @@ export default function CornerBalanceComparisonChart() {
               className="min-w-[980px]"
             >
               <defs>
-                {selectedDebriefs.flatMap((debrief) =>
-                  visibleSeriesPhases.map((phase) => {
-                    const colour = carColours[debrief.id] ?? "#3b82f6";
-                    const filterId = `glow-${debrief.id}-${phase}`;
-
-                    return (
-                      <filter
-                        id={filterId}
-                        key={filterId}
-                        x="-50%"
-                        y="-50%"
-                        width="200%"
-                        height="200%"
-                      >
-                        <feDropShadow
-                          dx="0"
-                          dy="0"
-                          stdDeviation="3"
-                          floodColor={colour}
-                          floodOpacity="0.45"
-                        />
-                      </filter>
-                    );
-                  })
-                )}
+                {selectedDebriefs.map((debrief) => {
+                  const colour = carColours[debrief.id] ?? "#3b82f6";
+                  return (
+                    <filter
+                      id={`glow-${debrief.id}`}
+                      key={`glow-${debrief.id}`}
+                      x="-50%"
+                      y="-50%"
+                      width="200%"
+                      height="200%"
+                    >
+                      <feDropShadow
+                        dx="0"
+                        dy="0"
+                        stdDeviation="3"
+                        floodColor={colour}
+                        floodOpacity="0.45"
+                      />
+                    </filter>
+                  );
+                })}
               </defs>
 
               <rect
@@ -585,98 +600,188 @@ export default function CornerBalanceComparisonChart() {
                 );
               })}
 
-              {allCornerNumbers.map((corner) => {
-                const x = xScale(corner);
+              {phaseMode === "all"
+                ? sequentialXAxis.map((point, index) => {
+                    const x = xScaleSequential(index);
+                    const isCornerStart = point.phase === "entry";
+                    const isCornerMid = point.phase === "mid";
+                    const isCornerEnd = point.phase === "exit";
+
+                    return (
+                      <g key={`seq-axis-${point.key}`}>
+                        <line
+                          x1={x}
+                          x2={x}
+                          y1={chartGeometry.topPadding}
+                          y2={chartGeometry.topPadding + plotHeight}
+                          stroke={
+                            isCornerStart
+                              ? "rgba(255,255,255,0.10)"
+                              : "rgba(255,255,255,0.05)"
+                          }
+                          strokeWidth={isCornerStart ? 1.2 : 1}
+                        />
+                        <text
+                          x={x}
+                          y={chartGeometry.topPadding + plotHeight + 24}
+                          textAnchor="middle"
+                          fontSize="11"
+                          fill={
+                            isCornerStart || isCornerEnd
+                              ? "rgba(255,255,255,0.72)"
+                              : "rgba(255,255,255,0.52)"
+                          }
+                        >
+                          {point.label}
+                        </text>
+
+                        {isCornerMid && (
+                          <text
+                            x={x}
+                            y={chartGeometry.topPadding + plotHeight + 42}
+                            textAnchor="middle"
+                            fontSize="10"
+                            fill="rgba(255,255,255,0.35)"
+                          >
+                            T{point.corner}
+                          </text>
+                        )}
+                      </g>
+                    );
+                  })
+                : allCornerNumbers.map((corner) => {
+                    const x = xScaleStandard(corner);
+                    return (
+                      <g key={`corner-${corner}`}>
+                        <line
+                          x1={x}
+                          x2={x}
+                          y1={chartGeometry.topPadding}
+                          y2={chartGeometry.topPadding + plotHeight}
+                          stroke="rgba(255,255,255,0.06)"
+                          strokeWidth={1}
+                        />
+                        <text
+                          x={x}
+                          y={chartGeometry.topPadding + plotHeight + 24}
+                          textAnchor="middle"
+                          fontSize="12"
+                          fill="rgba(255,255,255,0.72)"
+                        >
+                          T{corner}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+              {selectedDebriefs.map((debrief) => {
+                const colour = carColours[debrief.id] ?? "#3b82f6";
+
+                const points =
+                  phaseMode === "all"
+                    ? sequentialXAxis
+                        .map((seqPoint, index) => {
+                          const row = debrief.corner_feedback.find(
+                            (r) => r.cornerId === seqPoint.corner
+                          );
+                          if (!row) return null;
+
+                          let value: number | null = null;
+                          if (seqPoint.phase === "entry") {
+                            value = clampBalance(row.entryBalanceValue ?? null);
+                          }
+                          if (seqPoint.phase === "mid") {
+                            value = clampBalance(row.midBalanceValue ?? null);
+                          }
+                          if (seqPoint.phase === "exit") {
+                            value = clampBalance(row.exitBalanceValue ?? null);
+                          }
+
+                          if (value === null) return null;
+
+                          return {
+                            key: seqPoint.key,
+                            x: xScaleSequential(index),
+                            y: yScale(value),
+                            value,
+                            label: seqPoint.label,
+                          };
+                        })
+                        .filter(
+                          (
+                            point
+                          ): point is {
+                            key: string;
+                            x: number;
+                            y: number;
+                            value: number;
+                            label: string;
+                          } => Boolean(point)
+                        )
+                    : allCornerNumbers
+                        .map((corner) => {
+                          const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
+                          if (!row) return null;
+
+                          const value = getPointValue(row, phaseMode);
+                          if (value === null) return null;
+
+                          return {
+                            key: `T${corner}`,
+                            x: xScaleStandard(corner),
+                            y: yScale(value),
+                            value,
+                            label: `T${corner}`,
+                          };
+                        })
+                        .filter(
+                          (
+                            point
+                          ): point is {
+                            key: string;
+                            x: number;
+                            y: number;
+                            value: number;
+                            label: string;
+                          } => Boolean(point)
+                        );
+
+                const path = points
+                  .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+                  .join(" ");
+
                 return (
-                  <g key={`corner-${corner}`}>
-                    <line
-                      x1={x}
-                      x2={x}
-                      y1={chartGeometry.topPadding}
-                      y2={chartGeometry.topPadding + plotHeight}
-                      stroke="rgba(255,255,255,0.06)"
-                      strokeWidth={1}
-                    />
-                    <text
-                      x={x}
-                      y={chartGeometry.topPadding + plotHeight + 24}
-                      textAnchor="middle"
-                      fontSize="12"
-                      fill="rgba(255,255,255,0.72)"
-                    >
-                      T{corner}
-                    </text>
+                  <g key={`series-${debrief.id}`}>
+                    {points.length > 1 && (
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke={colour}
+                        strokeWidth={3}
+                        strokeLinejoin="round"
+                        strokeLinecap="round"
+                        filter={`url(#glow-${debrief.id})`}
+                      />
+                    )}
+
+                    {points.map((point) => (
+                      <g key={`point-${debrief.id}-${point.key}`}>
+                        <circle
+                          cx={point.x}
+                          cy={point.y}
+                          r={5.5}
+                          fill={colour}
+                          stroke="#07101d"
+                          strokeWidth={2}
+                        />
+                        <title>
+                          {`${debrief.driver_name} | ${point.label} | ${point.value.toFixed(2)}`}
+                        </title>
+                      </g>
+                    ))}
                   </g>
                 );
               })}
-
-              {selectedDebriefs.flatMap((debrief) =>
-                visibleSeriesPhases.map((phase) => {
-                  const seriesMap = buildSeriesMap(debrief, phase);
-                  const points = allCornerNumbers
-                    .map((corner) => {
-                      const value = seriesMap.get(corner);
-                      if (value === null || value === undefined) return null;
-                      return {
-                        corner,
-                        x: xScale(corner),
-                        y: yScale(value),
-                        value,
-                      };
-                    })
-                    .filter(
-                      (
-                        point
-                      ): point is { corner: number; x: number; y: number; value: number } =>
-                        Boolean(point)
-                    );
-
-                  const colour = carColours[debrief.id] ?? "#3b82f6";
-                  const dasharray = getPhaseStrokeDasharray(phase);
-                  const radius = getPhasePointRadius(phase);
-
-                  const path = points
-                    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-                    .join(" ");
-
-                  const filterId = `glow-${debrief.id}-${phase}`;
-
-                  return (
-                    <g key={`series-${debrief.id}-${phase}`}>
-                      {points.length > 1 && (
-                        <path
-                          d={path}
-                          fill="none"
-                          stroke={colour}
-                          strokeWidth={phaseMode === "all" ? 2.5 : 3}
-                          strokeLinejoin="round"
-                          strokeLinecap="round"
-                          strokeDasharray={dasharray}
-                          filter={`url(#${filterId})`}
-                          opacity={phaseMode === "all" ? 0.95 : 1}
-                        />
-                      )}
-
-                      {points.map((point) => (
-                        <g key={`point-${debrief.id}-${phase}-${point.corner}`}>
-                          <circle
-                            cx={point.x}
-                            cy={point.y}
-                            r={radius}
-                            fill={colour}
-                            stroke="#07101d"
-                            strokeWidth={2}
-                            opacity={phaseMode === "all" ? 0.95 : 1}
-                          />
-                          <title>
-                            {`${debrief.driver_name} | ${getPhaseLabel(phase)} | T${point.corner} | ${point.value.toFixed(2)}`}
-                          </title>
-                        </g>
-                      ))}
-                    </g>
-                  );
-                })
-              )}
 
               <text
                 x={chartGeometry.leftPadding}
@@ -702,45 +807,20 @@ export default function CornerBalanceComparisonChart() {
             {selectedDebriefs.map((debrief) => (
               <div
                 key={`legend-${debrief.id}`}
-                className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3"
+                className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2"
               >
-                <div className="flex items-center gap-3">
-                  <span
-                    className="h-3 w-10 rounded-full"
-                    style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
-                  />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm text-white">{debrief.driver_name}</div>
-                    <div className="truncate text-xs text-white/50">
-                      {formatDebriefLabel(debrief)}
-                    </div>
+                <span
+                  className="h-3 w-10 rounded-full"
+                  style={{ backgroundColor: carColours[debrief.id] ?? "#3b82f6" }}
+                />
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-white">
+                    {debrief.driver_name}
+                  </div>
+                  <div className="truncate text-xs text-white/50">
+                    {formatDebriefLabel(debrief)}
                   </div>
                 </div>
-
-                {phaseMode === "all" && (
-                  <div className="mt-3 space-y-2 pl-1">
-                    {(["entry", "mid", "exit"] as SeriesPhase[]).map((phase) => (
-                      <div
-                        key={`legend-phase-${debrief.id}-${phase}`}
-                        className="flex items-center gap-3 text-xs text-white/65"
-                      >
-                        <svg width="42" height="10" viewBox="0 0 42 10" className="shrink-0">
-                          <line
-                            x1="2"
-                            y1="5"
-                            x2="40"
-                            y2="5"
-                            stroke={carColours[debrief.id] ?? "#3b82f6"}
-                            strokeWidth="2.5"
-                            strokeDasharray={getPhaseStrokeDasharray(phase)}
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                        <span>{getPhaseLabel(phase)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             ))}
           </div>
