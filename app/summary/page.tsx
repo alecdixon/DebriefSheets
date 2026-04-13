@@ -995,10 +995,7 @@ export default function CornerBalanceComparisonChart() {
                             const row = debrief.corner_feedback.find((r) => r.cornerId === corner);
                             if (!row) return null;
 
-                            const value = getPointValue(
-                              row,
-                              phaseMode === "all" ? "average" : phaseMode
-                            );
+                            const value = getPointValue(row, phaseMode);
                             if (value === null) return null;
 
                             return {
