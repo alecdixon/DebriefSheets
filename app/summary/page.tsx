@@ -65,12 +65,6 @@ const graphPalette = [
   "#84CC16", // lime
 ];
 
-const [driverColours, setDriverColours] = useState<Record<string, string>>({});
-
-function getDriverColour(id: string, index: number) {
-  return driverColours[id] || graphPalette[index % graphPalette.length];
-}
-
 const driverColumnStyles = [
   {
     text: "#1D4ED8",
@@ -220,14 +214,17 @@ export default function SummaryPage() {
   const [clearing, setClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [printScale, setPrintScale] = useState(1);
-
   const [baselineDebriefId, setBaselineDebriefId] = useState("");
   const [manualCornerDeltas, setManualCornerDeltas] = useState<
     Record<string, Record<number, string>>
   >({});
+  const [driverColours, setDriverColours] = useState<Record<string, string>>({});
 
   const printContentRef = useRef<HTMLDivElement | null>(null);
 
+  function getDriverColour(id: string, index: number) {
+    return driverColours[id] ?? graphPalette[index % graphPalette.length];
+  }
   async function loadDebriefs() {
     setLoading(true);
     setErrorMessage("");
