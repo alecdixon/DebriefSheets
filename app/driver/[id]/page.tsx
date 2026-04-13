@@ -155,7 +155,7 @@ function BalanceSlider({
         step={0.5}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-[#E10600]"
+        className="w-full h-5 accent-[#E10600] cursor-pointer"
       />
 
       <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] text-[#9CA3AF] sm:text-xs">

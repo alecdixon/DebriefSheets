@@ -726,7 +726,7 @@ export default function SummaryPage() {
                   </p>
                 ) : (
                   selectedDebriefs.map((debrief, index) => {
-                    const colour = graphPalette[index % graphPalette.length];
+                    const colour = getDriverColour(debrief.id, index);
                     return (
                       <div key={debrief.id} className="flex items-center gap-2">
                         <span
@@ -975,7 +975,7 @@ export default function SummaryPage() {
                           key={debrief.id}
                           fill="none"
                           stroke={colour}
-                          strokeWidth="2.5"
+                          strokeWidth="3.2"
                           points={points.join(" ")}
                         />
                       );
@@ -1006,7 +1006,7 @@ export default function SummaryPage() {
                               key={`${debrief.id}-${cornerId}-${phase.key}`}
                               cx={x}
                               cy={y}
-                              r={3.5}
+                              r={4.5}
                               fill={colour}
                               stroke="#111827"
                               strokeWidth={0.8}
