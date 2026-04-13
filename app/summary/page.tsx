@@ -43,69 +43,37 @@ const phaseRows: { key: PhaseKey; label: string }[] = [
 ];
 
 const plotTheme = {
-  background: "#0F172A",      // slate-900
-  panel: "#1E293B",           // slate-800
-  row: "#111827",             // gray-900
-  header: "#334155",          // slate-700
-  gridMajor: "#475569",       // slate-600
-  gridMinor: "#334155",       // slate-700
-  textPrimary: "#F8FAFC",     // slate-50
-  textSecondary: "#CBD5E1",   // slate-300
+  background: "#0F172A",
+  panel: "#1E293B",
+  row: "#111827",
+  header: "#334155",
+  gridMajor: "#64748B",
+  gridMinor: "#334155",
+  textPrimary: "#F8FAFC",
+  textSecondary: "#CBD5E1",
   border: "#475569",
+  zeroLine: "#E2E8F0",
 };
 
 const graphPalette = [
-  "#60A5FA", // blue
-  "#34D399", // emerald
-  "#F59E0B", // amber
-  "#F472B6", // pink
-  "#A78BFA", // violet
-  "#22D3EE", // cyan
-  "#F87171", // red
-  "#84CC16", // lime
-];
-
-const driverColumnStyles = [
-  {
-    text: "#1D4ED8",
-    headerBg: "#DBEAFE",
-    subHeaderBg: "#EFF6FF",
-  },
-  {
-    text: "#047857",
-    headerBg: "#D1FAE5",
-    subHeaderBg: "#ECFDF5",
-  },
-  {
-    text: "#B45309",
-    headerBg: "#FEF3C7",
-    subHeaderBg: "#FFFBEB",
-  },
-  {
-    text: "#BE185D",
-    headerBg: "#FCE7F3",
-    subHeaderBg: "#FDF2F8",
-  },
-  {
-    text: "#6D28D9",
-    headerBg: "#EDE9FE",
-    subHeaderBg: "#F5F3FF",
-  },
-  {
-    text: "#0F766E",
-    headerBg: "#CCFBF1",
-    subHeaderBg: "#F0FDFA",
-  },
+  "#60A5FA",
+  "#34D399",
+  "#F59E0B",
+  "#F472B6",
+  "#A78BFA",
+  "#22D3EE",
+  "#F87171",
+  "#84CC16",
 ];
 
 const majorScaleLabels = [
-  { label: "US 3", value: -3, fill: "#EF4444" },
-  { label: "US 2", value: -2, fill: "#F59E0B" },
-  { label: "US 1", value: -1, fill: "#FACC15" },
-  { label: "OK", value: 0, fill: "#22C55E" },
-  { label: "OS 1", value: 1, fill: "#FACC15" },
-  { label: "OS 2", value: 2, fill: "#F59E0B" },
-  { label: "OS 3", value: 3, fill: "#EF4444" },
+  { label: "US 3", value: -3, fill: "#B91C1C" },
+  { label: "US 2", value: -2, fill: "#EA580C" },
+  { label: "US 1", value: -1, fill: "#EAB308" },
+  { label: "OK", value: 0, fill: "#16A34A" },
+  { label: "OS 1", value: 1, fill: "#EAB308" },
+  { label: "OS 2", value: 2, fill: "#EA580C" },
+  { label: "OS 3", value: 3, fill: "#B91C1C" },
 ];
 
 function clamp(value: number, min: number, max: number) {
@@ -215,9 +183,7 @@ export default function SummaryPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [printScale, setPrintScale] = useState(1);
   const [baselineDebriefId, setBaselineDebriefId] = useState("");
-  const [manualCornerDeltas, setManualCornerDeltas] = useState<
-    Record<string, Record<number, string>>
-  >({});
+  const [manualCornerDeltas, setManualCornerDeltas] = useState<Record<string, Record<number, string>>>({});
   const [driverColours, setDriverColours] = useState<Record<string, string>>({});
 
   const printContentRef = useRef<HTMLDivElement | null>(null);
@@ -225,6 +191,14 @@ export default function SummaryPage() {
   function getDriverColour(id: string, index: number) {
     return driverColours[id] ?? graphPalette[index % graphPalette.length];
   }
+
+  function getFeedbackForCorner(
+    debrief: CleanedDebrief | null | undefined,
+    cornerId: number
+  ): SubmittedCornerFeedback | undefined {
+    return debrief?.corner_feedback?.find((c) => c.cornerId === cornerId);
+  }
+
   async function loadDebriefs() {
     setLoading(true);
     setErrorMessage("");
@@ -350,10 +324,7 @@ export default function SummaryPage() {
 
       const comments = selectedDebriefs
         .map((debrief) => {
-          const feedback = (debrief.corner_feedback ?? []).find(
-            (c) => c.cornerId === cornerId
-          );
-
+          const feedback = getFeedbackForCorner(debrief, cornerId);
           const comment = safeText(feedback?.comment, "");
           if (!comment) return null;
 
@@ -518,7 +489,7 @@ export default function SummaryPage() {
 
   const deltaTurnColWidth = 70;
   const deltaGraphWidth = 760;
-  const deltaMetricColWidth = 86;
+  const deltaMetricColWidth = 92;
   const deltaGraphLeft = deltaTurnColWidth;
   const deltaInfoLeft = deltaGraphLeft + deltaGraphWidth;
 
@@ -748,46 +719,12 @@ export default function SummaryPage() {
                     className="h-auto w-full"
                     preserveAspectRatio="xMinYMin meet"
                   >
-                    <rect
-                      x={0}
-                      y={0}
-                      width={svgWidth}
-                      height={svgHeight}
-                      fill={plotTheme.background}
-                    />
+                    <rect x={0} y={0} width={svgWidth} height={svgHeight} fill={plotTheme.background} />
 
-                    <rect
-                      x={0}
-                      y={0}
-                      width={turnColWidth}
-                      height={headerHeight}
-                      fill={plotTheme.header}
-                      stroke="#111827"
-                    />
-                    <rect
-                      x={turnColWidth}
-                      y={0}
-                      width={phaseColWidth}
-                      height={headerHeight}
-                      fill={plotTheme.header}
-                      stroke="#111827"
-                    />
-                    <rect
-                      x={graphLeft}
-                      y={0}
-                      width={graphWidth}
-                      height={headerHeight}
-                      fill={plotTheme.header}
-                      stroke="#111827"
-                    />
-                    <rect
-                      x={commentLeft}
-                      y={0}
-                      width={commentWidth}
-                      height={headerHeight}
-                      fill={plotTheme.header}
-                      stroke="#111827"
-                    />
+                    <rect x={0} y={0} width={turnColWidth} height={headerHeight} fill={plotTheme.header} stroke="#111827" />
+                    <rect x={turnColWidth} y={0} width={phaseColWidth} height={headerHeight} fill={plotTheme.header} stroke="#111827" />
+                    <rect x={graphLeft} y={0} width={graphWidth} height={headerHeight} fill={plotTheme.header} stroke="#111827" />
+                    <rect x={commentLeft} y={0} width={commentWidth} height={headerHeight} fill={plotTheme.header} stroke="#111827" />
 
                     <text x={12} y={29} fontSize="12" fill={plotTheme.textPrimary} fontWeight="700">
                       Turn
@@ -841,7 +778,7 @@ export default function SummaryPage() {
                             x={x}
                             y={13}
                             fontSize="10"
-                            fill={plotTheme.textSecondary}
+                            fill="#FFFFFF"
                             fontWeight="700"
                             textAnchor="middle"
                           >
@@ -941,14 +878,12 @@ export default function SummaryPage() {
                     })}
 
                     {selectedDebriefs.map((debrief, driverIndex) => {
-                      const colour = graphPalette[driverIndex % graphPalette.length];
+                      const colour = getDriverColour(debrief.id, driverIndex);
                       const points: string[] = [];
 
                       Array.from({ length: maxCorner }).forEach((_, cornerIndex) => {
                         const cornerId = cornerIndex + 1;
-                        const feedback = (debrief.corner_feedback ?? []).find(
-                          (c) => c.cornerId === cornerId
-                        );
+                        const feedback = getFeedbackForCorner(debrief, cornerId);
 
                         phaseRows.forEach((phase, phaseIndex) => {
                           const value = feedback?.[phase.key];
@@ -979,13 +914,11 @@ export default function SummaryPage() {
                     })}
 
                     {selectedDebriefs.map((debrief, driverIndex) => {
-                      const colour = graphPalette[driverIndex % graphPalette.length];
+                      const colour = getDriverColour(debrief.id, driverIndex);
 
                       return Array.from({ length: maxCorner }).flatMap((_, cornerIndex) => {
                         const cornerId = cornerIndex + 1;
-                        const feedback = (debrief.corner_feedback ?? []).find(
-                          (c) => c.cornerId === cornerId
-                        );
+                        const feedback = getFeedbackForCorner(debrief, cornerId);
 
                         return phaseRows.map((phase, phaseIndex) => {
                           const value = feedback?.[phase.key];
@@ -1072,12 +1005,42 @@ export default function SummaryPage() {
                     </select>
                   </div>
 
+                  <div className="mt-5 rounded-2xl border border-[#2A3441] bg-[#111827] p-4">
+                    <h3 className="text-sm font-semibold text-white">Driver Colours</h3>
+                    <div className="mt-4 flex flex-wrap gap-4">
+                      {selectedDebriefs.map((debrief, index) => {
+                        const colour = getDriverColour(debrief.id, index);
+                        return (
+                          <div key={debrief.id} className="flex items-center gap-3 rounded-xl border border-[#2A3441] bg-[#1B2430] px-3 py-2">
+                            <input
+                              type="color"
+                              value={colour}
+                              onChange={(e) =>
+                                setDriverColours((prev) => ({
+                                  ...prev,
+                                  [debrief.id]: e.target.value,
+                                }))
+                              }
+                              className="h-8 w-8 cursor-pointer rounded border border-[#2A3441] bg-transparent"
+                            />
+                            <span
+                              className="inline-block h-3 w-3 rounded-full"
+                              style={{ backgroundColor: colour }}
+                            />
+                            <span className="text-sm text-white">
+                              {safeText(debrief.driver_name, "Unknown Driver")}
+                              {debrief.id === baselineDebriefId ? " (Baseline)" : ""}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <div className="mt-6 space-y-6">
                     {comparisonDebriefs.map((debrief) => {
-                      const selectedIndex = selectedDebriefs.findIndex(
-                        (item) => item.id === debrief.id
-                      );
-                      const colour = graphPalette[selectedIndex % graphPalette.length];
+                      const selectedIndex = selectedDebriefs.findIndex((item) => item.id === debrief.id);
+                      const colour = getDriverColour(debrief.id, selectedIndex);
 
                       return (
                         <div
@@ -1116,11 +1079,7 @@ export default function SummaryPage() {
                                     step="0.01"
                                     value={getManualCornerDelta(debrief.id, cornerId)}
                                     onChange={(e) =>
-                                      updateManualCornerDelta(
-                                        debrief.id,
-                                        cornerId,
-                                        e.target.value
-                                      )
+                                      updateManualCornerDelta(debrief.id, cornerId, e.target.value)
                                     }
                                     className="w-full rounded-xl border border-[#2A3441] bg-[#1B2430] px-3 py-2 text-sm text-white outline-none transition focus:border-[#E10600]"
                                     placeholder="0.00"
@@ -1177,39 +1136,6 @@ export default function SummaryPage() {
                     })}
                   </div>
 
-                      <div className="mt-4 flex flex-wrap items-center gap-4">
-                        {selectedDebriefs.map((debrief, index) => {
-                          const colour = getDriverColour(debrief.id, index);
-
-                          return (
-                            <div key={debrief.id} className="flex items-center gap-3">
-                              <input
-                               type="color"
-                                value={colour}
-                                onChange={(e) =>
-                                  setDriverColours((prev) => ({
-                                    ...prev,
-                                    [debrief.id]: e.target.value,
-                                  }))
-                                }
-                                className="h-8 w-8 cursor-pointer rounded border border-[#2A3441] bg-transparent"
-                              />
-
-                              <span
-                                className="inline-block h-3 w-3 rounded-full"
-                                style={{ backgroundColor: colour }}
-                              />
-
-                              <span className="text-sm text-white">
-                                {safeText(debrief.driver_name, "Unknown Driver")} —{" "}
-                                {safeText(debrief.session_name, "No Session")}
-                                {debrief.id === baselineDebriefId ? " (Baseline)" : ""}
-                              </span>
-                            </div>
-                          );
-                        })} 
-                      </div>
-
                   <div className="mt-6 overflow-x-auto print:overflow-visible">
                     <div className="min-w-[1900px] rounded-2xl border border-[#2A3441] bg-[#111827] print:min-w-0 print:border-[#d1d5db] print:bg-white">
                       <svg
@@ -1222,7 +1148,7 @@ export default function SummaryPage() {
                           y={0}
                           width={deltaSvgWidth}
                           height={deltaSvgHeight}
-                          fill="#F3F4F6"
+                          fill={plotTheme.background}
                         />
 
                         <rect
@@ -1259,12 +1185,7 @@ export default function SummaryPage() {
 
                         {Array.from({ length: 9 }, (_, i) => {
                           const value = -maxDeltaMagnitude + (i * (maxDeltaMagnitude * 2)) / 8;
-                          const x = xForDelta(
-                            value,
-                            deltaGraphLeft,
-                            deltaGraphWidth,
-                            maxDeltaMagnitude
-                          );
+                          const x = xForDelta(value, deltaGraphLeft, deltaGraphWidth, maxDeltaMagnitude);
                           const isZero = Math.abs(value) < 0.0001;
 
                           return (
@@ -1274,9 +1195,9 @@ export default function SummaryPage() {
                                 x2={x}
                                 y1={deltaHeaderHeight}
                                 y2={deltaSvgHeight}
-                                stroke={isZero ? "#111827" : "#9CA3AF"}
+                                stroke={isZero ? plotTheme.zeroLine : plotTheme.gridMinor}
                                 strokeDasharray={isZero ? "0" : "4 4"}
-                                strokeWidth={isZero ? 1.2 : 0.7}
+                                strokeWidth={isZero ? 1.4 : 0.7}
                               />
                               <text
                                 x={x}
@@ -1295,7 +1216,7 @@ export default function SummaryPage() {
                         {selectedDebriefs.map((debrief, driverIndex) => {
                           const x = deltaInfoLeft + driverIndex * 2 * deltaMetricColWidth;
                           const isBaseline = debrief.id === baselineDebriefId;
-                          const style = driverColumnStyles[driverIndex % driverColumnStyles.length];
+                          const colour = getDriverColour(debrief.id, driverIndex);
 
                           return (
                             <g key={`driver-header-${debrief.id}`}>
@@ -1304,7 +1225,7 @@ export default function SummaryPage() {
                                 y={0}
                                 width={deltaMetricColWidth * 2}
                                 height={deltaTopHeaderHeight}
-                                fill={isBaseline ? "#E5E7EB" : style.headerBg}
+                                fill={isBaseline ? "#334155" : "#1E293B"}
                                 stroke="#111827"
                               />
                               <rect
@@ -1312,7 +1233,7 @@ export default function SummaryPage() {
                                 y={deltaTopHeaderHeight}
                                 width={deltaMetricColWidth}
                                 height={deltaSubHeaderHeight}
-                                fill={isBaseline ? "#F3F4F6" : style.subHeaderBg}
+                                fill="#0F172A"
                                 stroke="#111827"
                               />
                               <rect
@@ -1320,7 +1241,7 @@ export default function SummaryPage() {
                                 y={deltaTopHeaderHeight}
                                 width={deltaMetricColWidth}
                                 height={deltaSubHeaderHeight}
-                                fill={isBaseline ? "#F3F4F6" : style.subHeaderBg}
+                                fill="#0F172A"
                                 stroke="#111827"
                               />
 
@@ -1328,7 +1249,7 @@ export default function SummaryPage() {
                                 x={x + deltaMetricColWidth}
                                 y={20}
                                 fontSize="11"
-                                fill={isBaseline ? "#111827" : style.text}
+                                fill={colour}
                                 fontWeight="700"
                                 textAnchor="middle"
                               >
@@ -1386,8 +1307,6 @@ export default function SummaryPage() {
                               {selectedDebriefs.map((debrief, driverIndex) => {
                                 const x = deltaInfoLeft + driverIndex * 2 * deltaMetricColWidth;
                                 const isBaseline = debrief.id === baselineDebriefId;
-                                const style =
-                                  driverColumnStyles[driverIndex % driverColumnStyles.length];
 
                                 return (
                                   <g key={`delta-cells-${debrief.id}-${cornerId}`}>
@@ -1396,7 +1315,7 @@ export default function SummaryPage() {
                                       y={y}
                                       width={deltaMetricColWidth}
                                       height={deltaRowHeight}
-                                      fill={isBaseline ? "#FFFFFF" : style.subHeaderBg}
+                                      fill={isBaseline ? "#172033" : "#111827"}
                                       stroke="#111827"
                                     />
                                     <rect
@@ -1404,7 +1323,7 @@ export default function SummaryPage() {
                                       y={y}
                                       width={deltaMetricColWidth}
                                       height={deltaRowHeight}
-                                      fill={plotTheme.row}
+                                      fill="#111827"
                                       stroke="#111827"
                                     />
                                   </g>
@@ -1426,10 +1345,8 @@ export default function SummaryPage() {
                         })}
 
                         {comparisonDebriefs.map((debrief) => {
-                          const selectedIndex = selectedDebriefs.findIndex(
-                            (item) => item.id === debrief.id
-                          );
-                          const colour = graphPalette[selectedIndex % graphPalette.length];
+                          const selectedIndex = selectedDebriefs.findIndex((item) => item.id === debrief.id);
+                          const colour = getDriverColour(debrief.id, selectedIndex);
                           const points: string[] = [];
 
                           Array.from({ length: maxCorner }).forEach((_, cornerIndex) => {
@@ -1439,12 +1356,7 @@ export default function SummaryPage() {
 
                             if (Number.isNaN(value)) return;
 
-                            const x = xForDelta(
-                              value,
-                              deltaGraphLeft,
-                              deltaGraphWidth,
-                              maxDeltaMagnitude
-                            );
+                            const x = xForDelta(value, deltaGraphLeft, deltaGraphWidth, maxDeltaMagnitude);
                             const y =
                               deltaHeaderHeight +
                               cornerIndex * deltaRowHeight +
@@ -1467,10 +1379,8 @@ export default function SummaryPage() {
                         })}
 
                         {comparisonDebriefs.map((debrief) => {
-                          const selectedIndex = selectedDebriefs.findIndex(
-                            (item) => item.id === debrief.id
-                          );
-                          const colour = graphPalette[selectedIndex % graphPalette.length];
+                          const selectedIndex = selectedDebriefs.findIndex((item) => item.id === debrief.id);
+                          const colour = getDriverColour(debrief.id, selectedIndex);
 
                           return Array.from({ length: maxCorner }).map((_, cornerIndex) => {
                             const cornerId = cornerIndex + 1;
@@ -1479,12 +1389,7 @@ export default function SummaryPage() {
 
                             if (Number.isNaN(value)) return null;
 
-                            const x = xForDelta(
-                              value,
-                              deltaGraphLeft,
-                              deltaGraphWidth,
-                              maxDeltaMagnitude
-                            );
+                            const x = xForDelta(value, deltaGraphLeft, deltaGraphWidth, maxDeltaMagnitude);
                             const y =
                               deltaHeaderHeight +
                               cornerIndex * deltaRowHeight +
@@ -1511,22 +1416,15 @@ export default function SummaryPage() {
                           return selectedDebriefs.map((debrief, driverIndex) => {
                             const x = deltaInfoLeft + driverIndex * 2 * deltaMetricColWidth;
                             const isBaseline = debrief.id === baselineDebriefId;
-                            const style =
-                              driverColumnStyles[driverIndex % driverColumnStyles.length];
+                            const colour = getDriverColour(debrief.id, driverIndex);
 
-                            const feedback = (debrief.corner_feedback ?? []).find(
-                              (c) => c.cornerId === cornerId
-                            );
+                            const feedback = getFeedbackForCorner(debrief, cornerId);
                             const balanceAvg = getBalanceAverage(feedback);
 
-                            const rawDelta = isBaseline
-                              ? null
-                              : getManualCornerDelta(debrief.id, cornerId);
+                            const rawDelta = isBaseline ? null : getManualCornerDelta(debrief.id, cornerId);
                             const parsedDelta = rawDelta === null ? null : Number(rawDelta);
                             const deltaValue =
-                              parsedDelta === null || Number.isNaN(parsedDelta)
-                                ? null
-                                : parsedDelta;
+                              parsedDelta === null || Number.isNaN(parsedDelta) ? null : parsedDelta;
 
                             return (
                               <g key={`delta-values-${debrief.id}-${cornerId}`}>
@@ -1534,7 +1432,7 @@ export default function SummaryPage() {
                                   x={x + deltaMetricColWidth / 2}
                                   y={y}
                                   fontSize="11"
-                                  fill={isBaseline ? "#111827" : style.text}
+                                  fill={colour}
                                   textAnchor="middle"
                                   fontWeight="700"
                                 >
@@ -1545,7 +1443,7 @@ export default function SummaryPage() {
                                   x={x + deltaMetricColWidth + deltaMetricColWidth / 2}
                                   y={y}
                                   fontSize="11"
-                                  fill={isBaseline ? "#6B7280" : style.text}
+                                  fill={isBaseline ? "#94A3B8" : colour}
                                   textAnchor="middle"
                                   fontWeight="700"
                                 >
