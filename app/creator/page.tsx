@@ -22,7 +22,7 @@ type Template = {
   corners: Corner[];
 };
 
-const TEAM_OPTIONS = ["GB3", "GT3", "British F4", "FIA F3", "FIA F2", "FREC"];
+const TEAM_OPTIONS = ["GB3", "GT3", "British F4", "FIA F3", "FIA F2", "FREC", "F1 Academy"];
 
 function colourButtonClass(active: boolean) {
   return active
