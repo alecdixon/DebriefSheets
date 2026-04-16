@@ -883,8 +883,13 @@ export async function POST(request: Request) {
       return Boolean(value) && array.indexOf(value) === index;
     });
 
-    const actualRecipient = "alec.dixon@rodinmotorsport.com";
-    const recipientLabel = intendedRecipients.join(" | ");
+    const actualRecipients =
+      intendedRecipients.length > 0
+     ? intendedRecipients
+     : ["alec.dixon@rodinmotorsport.com"];
+
+    const ccRecipient = "alec.dixon@rodinmotorsport.com";
+    const recipientLabel = actualRecipients.join(" | ");
 
     const { error: saveError } = await supabase
       .from("submitted_debriefs")
@@ -927,7 +932,8 @@ export async function POST(request: Request) {
 
     const { data, error } = await resend.emails.send({
       from: "Debrief App <onboarding@resend.dev>",
-      to: [actualRecipient],
+      to: actualRecipients,
+      cc: [ccRecipient],
       subject: `[FORWARD_TO=${recipientLabel}] [TEAM=${team ?? "UNKNOWN"}] ${trackName} debrief - ${driverName}`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.5;">
@@ -963,8 +969,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       data,
-      sentTo: actualRecipient,
-      intendedRecipients,
+      sentTo: actualRecipients,
+      cc: ccRecipient,
     });
   } catch (error) {
     console.error("send-debrief route failed:", error);
