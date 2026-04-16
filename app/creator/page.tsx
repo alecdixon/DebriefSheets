@@ -65,11 +65,8 @@ function buildInitialCorners(count: number): Corner[] {
   });
 }
 
-function normaliseCorners(corners: Corner[]): Corner[] {
-  return corners.map((corner, index) => ({
-    ...corner,
-    id: index + 1,
-  }));
+function sortCornersById(corners: Corner[]): Corner[] {
+  return [...corners].sort((a, b) => a.id - b.id);
 }
 
 export default function CreatorPage() {
@@ -150,7 +147,7 @@ export default function CreatorPage() {
     setTeam(template.team || "GB3");
     setTrackName(template.track_name || "");
     setTrackMapDataUrl(template.track_map_url || "");
-    setCorners(normaliseCorners((template.corners ?? []) as Corner[]));
+    setCorners(sortCornersById((template.corners ?? []) as Corner[]));
     setTurnCount(String(template.corner_count || (template.corners ?? []).length || 0));
     setGeneratedLink(`${origin}/driver/${template.id}`);
     setStatus(`Editing template: ${template.track_name}`);
@@ -263,9 +260,7 @@ export default function CreatorPage() {
   }
 
   function removeSpecificCorner(cornerId: number) {
-    setCorners((prev) =>
-      normaliseCorners(prev.filter((corner) => corner.id !== cornerId))
-    );
+    setCorners((prev) => prev.filter((corner) => corner.id !== cornerId));
   }
 
   async function handleSaveTemplate() {
@@ -298,7 +293,7 @@ export default function CreatorPage() {
         track_name: trackName.trim(),
         track_map_url: trackMapDataUrl,
         corner_count: corners.length,
-        corners: normaliseCorners(corners),
+        corners: sortCornersById(corners),
       };
 
       if (selectedTemplateId) {
