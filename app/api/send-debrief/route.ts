@@ -1,4 +1,4 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import { NextResponse } from "next/server";
@@ -193,52 +193,20 @@ async function buildDebriefPdf(payload: {
     y: number,
     width: number,
     height: number,
-   label: string,
-   value?: number,
-   fontSize = 7.8
+    label: string,
+    value?: number,
+    fontSize = 7.8
   ) {
-   const fill = getBalanceColor(value);
-
-   page.drawRectangle({
-      x,
-      y,
-     width,
-      height,
-      color: fill,
-     borderColor: colors.border,
-     borderWidth: 0.8,
-    });
-
-    const textWidth = bold.widthOfTextAtSize(label, fontSize);
-    page.drawText(label, {
-      x: x + (width - textWidth) / 2,
-      y: y + height / 2 - fontSize / 2 + 1,
-     size: fontSize,
-     font: bold,
-     color: colors.text,
-    });
-  }
-
-  function drawTurnChip(
-    page: PDFPage,
-    x: number,
-   y: number,
-   width: number,
-   height: number,
-   label: string,
-   color?: TurnColor,
-   fontSize = 7.8
-  ) {
-    const fill = getTurnColor(color);
+    const fill = getBalanceColor(value);
 
     page.drawRectangle({
-    x,
-    y,
-    width,
-    height,
-    color: fill,
-    borderColor: colors.border,
-    borderWidth: 0.8,
+      x,
+      y,
+      width,
+      height,
+      color: fill,
+      borderColor: colors.border,
+      borderWidth: 0.8,
     });
 
     const textWidth = bold.widthOfTextAtSize(label, fontSize);
@@ -248,7 +216,39 @@ async function buildDebriefPdf(payload: {
       size: fontSize,
       font: bold,
       color: colors.text,
-   });
+    });
+  }
+
+  function drawTurnChip(
+    page: PDFPage,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    color?: TurnColor,
+    fontSize = 7.8
+  ) {
+    const fill = getTurnColor(color);
+
+    page.drawRectangle({
+      x,
+      y,
+      width,
+      height,
+      color: fill,
+      borderColor: colors.border,
+      borderWidth: 0.8,
+    });
+
+    const textWidth = bold.widthOfTextAtSize(label, fontSize);
+    page.drawText(label, {
+      x: x + (width - textWidth) / 2,
+      y: y + height / 2 - fontSize / 2 + 1,
+      size: fontSize,
+      font: bold,
+      color: colors.text,
+    });
   }
 
   async function drawTrackMapPanel(
@@ -326,7 +326,8 @@ async function buildDebriefPdf(payload: {
         });
 
         const label = String(corner.id);
-        const fontSize = width < 230 ? (label.length >= 2 ? 6.5 : 7.5) : label.length >= 2 ? 8 : 9;
+        const fontSize =
+          width < 230 ? (label.length >= 2 ? 6.5 : 7.5) : label.length >= 2 ? 8 : 9;
         const textWidth = bold.widthOfTextAtSize(label, fontSize);
 
         page.drawText(label, {
@@ -534,29 +535,25 @@ async function buildDebriefPdf(payload: {
 
     const tableX = margin;
     const mapGap = 18;
-
-    // Slightly narrower table to free a bit more room visually
     const tableW = 420;
     const mapX = tableX + tableW + mapGap;
     const mapW = pageWidth - margin - mapX;
-
-    // Keep map + notes on right, but make them adaptive
     const notesY = 24;
     const notesH = 78;
     const mapY = 110;
     const mapH = 420;
 
     await drawTrackMapPanel(
-     page,
-     mapX,
-     mapY,
-     mapW,
-     mapH,
-     payload.trackMapUrl,
-     payload.corners,
-     payload.incidentMarkers,
-     "Track Map"
-   );
+      page,
+      mapX,
+      mapY,
+      mapW,
+      mapH,
+      payload.trackMapUrl,
+      payload.corners,
+      payload.incidentMarkers,
+      "Track Map"
+    );
 
     drawPanel(page, mapX, notesY, mapW, notesH, "Incident Notes");
 
@@ -564,43 +561,34 @@ async function buildDebriefPdf(payload: {
       payload.incidentMarkers.length > 0
         ? payload.incidentMarkers.flatMap((marker, index) =>
             wrapText(
-             `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
-             24
-           )
-         )
-       : ["No incident markers added"];
+              `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
+              24
+            )
+          )
+        : ["No incident markers added"];
 
     rightIncidentLines.slice(0, 4).forEach((line, i) => {
       page.drawText(line, {
         x: mapX + 14,
         y: notesY + notesH - 42 - i * 11,
         size: 8,
-       font,
-       color: colors.muted,
+        font,
+        color: colors.muted,
       });
     });
 
-    // Table vertical sizing
     const headerTopY = pageHeight - 68;
-    const headerHeight = 24;
     const tableTopAfterHeader = headerTopY - 28;
     const tableBottomY = 28;
-
     const availableTableHeight = tableTopAfterHeader - tableBottomY;
-
-   // Fit all rows into available height
     const rowGap = 4;
     const fittedRowHeight = Math.floor(
       (availableTableHeight - rowGap * (rowCount - 1)) / rowCount
     );
-
-    // Clamp so it doesn't become ridiculous
-   const rowHeight = Math.max(18, Math.min(30, fittedRowHeight));
-
+    const rowHeight = Math.max(18, Math.min(30, fittedRowHeight));
     const chipHeight = Math.max(12, rowHeight - 8);
     const chipWidthTurn = 34;
     const chipWidthBalance = 38;
-
     const headerFontSize = rowHeight <= 20 ? 8 : 9;
     const bodyFontSize = rowHeight <= 20 ? 7.5 : 9;
     const chipFontSize = rowHeight <= 20 ? 6.5 : 7.8;
@@ -609,11 +597,8 @@ async function buildDebriefPdf(payload: {
       page,
       tableX,
       tableW,
-      mapX,
-      mapW,
       cursorY: tableTopAfterHeader,
       headerTopY,
-      headerHeight,
       rowHeight,
       rowGap,
       chipHeight,
@@ -626,19 +611,19 @@ async function buildDebriefPdf(payload: {
   }
 
   function drawTableHeader(
-   page: PDFPage,
+    page: PDFPage,
     tableX: number,
     tableW: number,
     y: number,
     fontSize: number
   ) {
-   page.drawRectangle({
+    page.drawRectangle({
       x: tableX,
       y: y - 16,
       width: tableW,
-     height: 24,
-     color: colors.panel,
-     borderColor: colors.border,
+      height: 24,
+      color: colors.panel,
+      borderColor: colors.border,
       borderWidth: 1,
     });
 
@@ -655,90 +640,90 @@ async function buildDebriefPdf(payload: {
       y: y - 8,
       size: fontSize,
       font: bold,
-     color: colors.muted,
+      color: colors.muted,
     });
 
     page.drawText("Mid", {
       x: tableX + 102,
-     y: y - 8,
+      y: y - 8,
       size: fontSize,
       font: bold,
       color: colors.muted,
-   });
+    });
 
     page.drawText("Exit", {
       x: tableX + 148,
       y: y - 8,
-     size: fontSize,
-     font: bold,
-     color: colors.muted,
+      size: fontSize,
+      font: bold,
+      color: colors.muted,
     });
 
-   page.drawText("Comment", {
+    page.drawText("Comment", {
       x: tableX + 196,
       y: y - 8,
       size: fontSize,
       font: bold,
       color: colors.muted,
-   });
+    });
   }
 
   const summaryLayout = await startCornerSummaryPageFitted(sortedRows.length);
 
   drawTableHeader(
     summaryLayout.page,
-   summaryLayout.tableX,
-   summaryLayout.tableW,
-   summaryLayout.headerTopY,
+    summaryLayout.tableX,
+    summaryLayout.tableW,
+    summaryLayout.headerTopY,
     summaryLayout.headerFontSize
   );
 
   for (const row of sortedRows) {
-   const rowY = summaryLayout.cursorY;
+    const rowY = summaryLayout.cursorY;
 
-   summaryLayout.page.drawRectangle({
-     x: summaryLayout.tableX,
+    summaryLayout.page.drawRectangle({
+      x: summaryLayout.tableX,
       y: rowY - summaryLayout.rowHeight + 4,
-     width: summaryLayout.tableW,
+      width: summaryLayout.tableW,
       height: summaryLayout.rowHeight,
       color: colors.panel,
-     borderColor: colors.border,
-     borderWidth: 1,
-   });
+      borderColor: colors.border,
+      borderWidth: 1,
+    });
 
-   const cornerMeta = cornerLookup.get(row.cornerId);
-
-   const chipY = rowY - summaryLayout.rowHeight / 2 - summaryLayout.chipHeight / 2 + 2;
+    const cornerMeta = cornerLookup.get(row.cornerId);
+    const chipY =
+      rowY - summaryLayout.rowHeight / 2 - summaryLayout.chipHeight / 2 + 2;
 
     drawTurnChip(
-     summaryLayout.page,
-     summaryLayout.tableX + 8,
-     chipY,
-     summaryLayout.chipWidthTurn,
-     summaryLayout.chipHeight,
-     `T${row.cornerId}`,
-     cornerMeta?.color,
-     summaryLayout.chipFontSize
+      summaryLayout.page,
+      summaryLayout.tableX + 8,
+      chipY,
+      summaryLayout.chipWidthTurn,
+      summaryLayout.chipHeight,
+      `T${row.cornerId}`,
+      cornerMeta?.color,
+      summaryLayout.chipFontSize
     );
 
     drawBalanceChip(
       summaryLayout.page,
       summaryLayout.tableX + 52,
-     chipY,
-     summaryLayout.chipWidthBalance,
+      chipY,
+      summaryLayout.chipWidthBalance,
       summaryLayout.chipHeight,
       row.entryBalance || "-",
-     row.entryBalanceValue,
-     summaryLayout.chipFontSize
+      row.entryBalanceValue,
+      summaryLayout.chipFontSize
     );
 
     drawBalanceChip(
-     summaryLayout.page,
-     summaryLayout.tableX + 98,
-     chipY,
-     summaryLayout.chipWidthBalance,
-     summaryLayout.chipHeight,
-     row.midBalance || "-",
+      summaryLayout.page,
+      summaryLayout.tableX + 98,
+      chipY,
+      summaryLayout.chipWidthBalance,
+      summaryLayout.chipHeight,
+      row.midBalance || "-",
       row.midBalanceValue,
       summaryLayout.chipFontSize
     );
@@ -747,20 +732,20 @@ async function buildDebriefPdf(payload: {
       summaryLayout.page,
       summaryLayout.tableX + 144,
       chipY,
-     summaryLayout.chipWidthBalance,
+      summaryLayout.chipWidthBalance,
       summaryLayout.chipHeight,
-     row.exitBalance || "-",
-     row.exitBalanceValue,
-     summaryLayout.chipFontSize
+      row.exitBalance || "-",
+      row.exitBalanceValue,
+      summaryLayout.chipFontSize
     );
 
     const singleLineComment = (row.comment?.trim() || "-").slice(0, 52);
 
     summaryLayout.page.drawText(singleLineComment, {
-     x: summaryLayout.tableX + 196,
-     y: rowY - summaryLayout.rowHeight / 2 - summaryLayout.bodyFontSize / 2 + 5,
-     size: summaryLayout.bodyFontSize,
-     font,
+      x: summaryLayout.tableX + 196,
+      y: rowY - summaryLayout.rowHeight / 2 - summaryLayout.bodyFontSize / 2 + 5,
+      size: summaryLayout.bodyFontSize,
+      font,
       color: colors.muted,
     });
 
@@ -839,16 +824,24 @@ async function buildDebriefPdf(payload: {
 
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.RESEND_API_KEY;
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
 
-    if (!apiKey) {
+    if (!gmailUser || !gmailAppPassword) {
       return NextResponse.json(
-        { error: "RESEND_API_KEY is not configured." },
+        { error: "GMAIL_USER or GMAIL_APP_PASSWORD is not configured." },
         { status: 500 }
       );
     }
 
-    const resend = new Resend(apiKey);
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: gmailUser,
+        pass: gmailAppPassword,
+      },
+    });
+
     const body = (await request.json()) as RequestBody;
 
     const {
@@ -885,27 +878,24 @@ export async function POST(request: Request) {
 
     const actualRecipients =
       intendedRecipients.length > 0
-     ? intendedRecipients
-     : ["alec.dixon@rodinmotorsport.com"];
+        ? intendedRecipients
+        : ["alec.dixon@rodinmotorsport.com"];
 
     const ccRecipient = "alec.dixon@rodinmotorsport.com";
-    const recipientLabel = actualRecipients.join(" | ");
 
-    const { error: saveError } = await supabase
-      .from("submitted_debriefs")
-      .insert({
-        team: team ?? null,
-        template_id: templateId ?? null,
-        track_name: trackName,
-        session_name: sessionName ?? null,
-        fastest_lap_time: fastestLapTime?.trim() ? fastestLapTime.trim() : null,
-        driver_name: driverName,
-        primary_limitation: primaryLimitation ?? null,
-        overall_comments: overallComments ?? null,
-        reliability_flags: reliabilityFlags ?? {},
-        corner_feedback: cornerFeedback ?? [],
-        incident_markers: incidentMarkers ?? [],
-      });
+    const { error: saveError } = await supabase.from("submitted_debriefs").insert({
+      team: team ?? null,
+      template_id: templateId ?? null,
+      track_name: trackName,
+      session_name: sessionName ?? null,
+      fastest_lap_time: fastestLapTime?.trim() ? fastestLapTime.trim() : null,
+      driver_name: driverName,
+      primary_limitation: primaryLimitation ?? null,
+      overall_comments: overallComments ?? null,
+      reliability_flags: reliabilityFlags ?? {},
+      corner_feedback: cornerFeedback ?? [],
+      incident_markers: incidentMarkers ?? [],
+    });
 
     if (saveError) {
       return NextResponse.json(
@@ -928,47 +918,40 @@ export async function POST(request: Request) {
       cornerFeedback: cornerFeedback ?? [],
     });
 
-    const pdfBase64 = pdfBuffer.toString("base64");
+    const safeFileName = `${new Date().toISOString().split("T")[0]}_${driverName}_${trackName}_DebriefSheet_${sessionName}_${fastestLapTime?.trim() || "NoLap"}.pdf`
+      .replace(/[\/\\:*?"<>|]/g, "-")
+      .replace(/\s+/g, "_")
+      .replace(/\.+/g, ".")
+      .toLowerCase();
 
-    const { data, error } = await resend.emails.send({
-      from: "Debrief App <onboarding@resend.dev>",
+    await transporter.sendMail({
+      from: `"Debrief App" <${gmailUser}>`,
       to: actualRecipients,
       cc: [ccRecipient],
-      subject: `[FORWARD_TO=${recipientLabel}] [TEAM=${team ?? "UNKNOWN"}] ${trackName} debrief - ${driverName}`,
+      subject: `[${team ?? "UNKNOWN"}] ${trackName} debrief - ${driverName}`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.5;">
           <h2>Driver Debrief Submitted</h2>
-          <p><strong>Selected recipient(s):</strong> ${recipientLabel || "None provided"}</p>
           <p><strong>Team:</strong> ${team ?? "Not provided"}</p>
           <p><strong>Track:</strong> ${trackName}</p>
           <p><strong>Driver:</strong> ${driverName}</p>
           <p><strong>Session:</strong> ${sessionName || "Not provided"}</p>
-          <p><strong>Fastest lap:</strong> ${fastestLapTime?.trim() ? fastestLapTime.trim() : "Not provided"}</p>
+          <p><strong>Fastest lap:</strong> ${
+            fastestLapTime?.trim() ? fastestLapTime.trim() : "Not provided"
+          }</p>
           <p>The completed debrief PDF is attached.</p>
         </div>
       `,
       attachments: [
         {
-          filename: `${new Date().toISOString().split("T")[0]}_${driverName}_${trackName}_DebriefSheet_${sessionName}_${fastestLapTime?.trim() || "NoLap"}.pdf`
-            .replace(/[\/\\:*?"<>|]/g, "-")
-            .replace(/\s+/g, "_")
-            .replace(/\.+/g, ".")
-            .toLowerCase(),
-          content: pdfBase64,
+          filename: safeFileName,
+          content: pdfBuffer,
         },
       ],
     });
 
-    if (error) {
-      return NextResponse.json(
-        { error: `Failed to send email: ${getErrorMessage(error)}` },
-        { status: 500 }
-      );
-    }
-
     return NextResponse.json({
       success: true,
-      data,
       sentTo: actualRecipients,
       cc: ccRecipient,
     });
