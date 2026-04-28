@@ -76,6 +76,7 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
 
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
+
     if (next.length <= maxCharsPerLine) {
       current = next;
     } else {
@@ -85,13 +86,12 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   }
 
   if (current) lines.push(current);
+
   return lines;
 }
 
 function getBalanceColor(value?: number) {
-  if (value === undefined || value === null) {
-    return rgb(0.18, 0.68, 0.35);
-  }
+  if (value === undefined || value === null) return rgb(0.18, 0.68, 0.35);
 
   if (value <= -2.25) return rgb(0.12, 0.34, 0.78);
   if (value <= -1.25) return rgb(0.18, 0.52, 0.88);
@@ -99,6 +99,7 @@ function getBalanceColor(value?: number) {
   if (value < 0.25) return rgb(0.18, 0.68, 0.35);
   if (value < 1.25) return rgb(0.86, 0.71, 0.14);
   if (value < 2.25) return rgb(0.91, 0.48, 0.15);
+
   return rgb(0.82, 0.19, 0.18);
 }
 
@@ -113,6 +114,20 @@ function getTurnColor(color?: TurnColor) {
     default:
       return rgb(0.08, 0.1, 0.13);
   }
+}
+
+function formatIncidentLines(
+  incidentMarkers: IncidentMarker[],
+  maxCharsPerLine: number
+): string[] {
+  if (incidentMarkers.length === 0) return ["No incident markers added"];
+
+  return incidentMarkers.flatMap((marker, index) =>
+    wrapText(
+      `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
+      maxCharsPerLine
+    )
+  );
 }
 
 async function buildDebriefPdf(payload: {
@@ -150,6 +165,7 @@ async function buildDebriefPdf(payload: {
 
   function addPage(): PDFPage {
     const page = pdf.addPage([pageWidth, pageHeight]);
+
     page.drawRectangle({
       x: 0,
       y: 0,
@@ -157,6 +173,7 @@ async function buildDebriefPdf(payload: {
       height: pageHeight,
       color: colors.bg,
     });
+
     return page;
   }
 
@@ -197,19 +214,18 @@ async function buildDebriefPdf(payload: {
     value?: number,
     fontSize = 7.8
   ) {
-    const fill = getBalanceColor(value);
-
     page.drawRectangle({
       x,
       y,
       width,
       height,
-      color: fill,
+      color: getBalanceColor(value),
       borderColor: colors.border,
       borderWidth: 0.8,
     });
 
     const textWidth = bold.widthOfTextAtSize(label, fontSize);
+
     page.drawText(label, {
       x: x + (width - textWidth) / 2,
       y: y + height / 2 - fontSize / 2 + 1,
@@ -229,19 +245,18 @@ async function buildDebriefPdf(payload: {
     color?: TurnColor,
     fontSize = 7.8
   ) {
-    const fill = getTurnColor(color);
-
     page.drawRectangle({
       x,
       y,
       width,
       height,
-      color: fill,
+      color: getTurnColor(color),
       borderColor: colors.border,
       borderWidth: 0.8,
     });
 
     const textWidth = bold.widthOfTextAtSize(label, fontSize);
+
     page.drawText(label, {
       x: x + (width - textWidth) / 2,
       y: y + height / 2 - fontSize / 2 + 1,
@@ -277,29 +292,27 @@ async function buildDebriefPdf(payload: {
 
     try {
       const response = await fetch(imageUrl);
-      if (!response.ok) throw new Error(`Track map fetch failed: ${response.status}`);
+
+      if (!response.ok) {
+        throw new Error(`Track map fetch failed: ${response.status}`);
+      }
 
       const imageBytes = await response.arrayBuffer();
       const contentType = response.headers.get("content-type") || "";
 
-      let image;
-      if (contentType.includes("png")) {
-        image = await pdf.embedPng(imageBytes);
-      } else {
-        image = await pdf.embedJpg(imageBytes);
-      }
+      const image = contentType.includes("png")
+        ? await pdf.embedPng(imageBytes)
+        : await pdf.embedJpg(imageBytes);
 
       const boxX = x + 14;
       const boxY = y + 14;
       const boxW = width - 28;
       const boxH = height - 44;
 
-      const imgW = image.width;
-      const imgH = image.height;
-      const scale = Math.min(boxW / imgW, boxH / imgH);
+      const scale = Math.min(boxW / image.width, boxH / image.height);
 
-      const drawW = imgW * scale;
-      const drawH = imgH * scale;
+      const drawW = image.width * scale;
+      const drawH = image.height * scale;
       const drawX = boxX + (boxW - drawW) / 2;
       const drawY = boxY + (boxH - drawH) / 2;
 
@@ -313,7 +326,6 @@ async function buildDebriefPdf(payload: {
       for (const corner of corners) {
         const markerX = drawX + (corner.x / 100) * drawW;
         const markerY = drawY + drawH - (corner.y / 100) * drawH;
-
         const markerRadius = width < 230 ? 9 : 12;
 
         page.drawCircle({
@@ -343,7 +355,6 @@ async function buildDebriefPdf(payload: {
         const marker = incidentMarkers[i];
         const markerX = drawX + (marker.x / 100) * drawW;
         const markerY = drawY + drawH - (marker.y / 100) * drawH;
-
         const markerRadius = width < 230 ? 6 : 8;
 
         page.drawCircle({
@@ -460,6 +471,7 @@ async function buildDebriefPdf(payload: {
   const rightW = pageWidth - rightX - margin;
 
   drawPanel(page1, leftX, 220, leftW, 120, "Primary Limitation");
+
   wrapText(payload.primaryLimitation || "-", 50)
     .slice(0, 4)
     .forEach((line, i) => {
@@ -472,18 +484,19 @@ async function buildDebriefPdf(payload: {
       });
     });
 
-  drawPanel(page1, leftX, 70, leftW, 120, "Overall Comments");
-  wrapText(payload.overallComments || "-", 50)
-    .slice(0, 4)
-    .forEach((line, i) => {
-      page1.drawText(line, {
-        x: leftX + 14,
-        y: 144 - i * 18,
-        size: 11,
-        font,
-        color: colors.muted,
-      });
+  drawPanel(page1, leftX, 70, leftW, 120, "Incident Notes");
+
+  const pageOneIncidentLines = formatIncidentLines(payload.incidentMarkers, 50);
+
+  pageOneIncidentLines.slice(0, 5).forEach((line, i) => {
+    page1.drawText(line, {
+      x: leftX + 14,
+      y: 144 - i * 16,
+      size: 10,
+      font,
+      color: colors.muted,
     });
+  });
 
   await drawTrackMapPanel(
     page1,
@@ -496,46 +509,23 @@ async function buildDebriefPdf(payload: {
     payload.incidentMarkers
   );
 
-  const incidentLines =
-    payload.incidentMarkers.length > 0
-      ? payload.incidentMarkers.flatMap((marker, index) =>
-          wrapText(
-            `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
-            42
-          )
-        )
-      : ["No incident markers added"];
-
-  drawPanel(page1, rightX, 24, rightW, 36, "Incident Notes");
-
-  incidentLines.slice(0, 2).forEach((line, i) => {
-    page1.drawText(line, {
-      x: rightX + 14,
-      y: 44 - i * 14,
-      size: 9,
-      font,
-      color: colors.muted,
-    });
-  });
-
   const cornerLookup = new Map(payload.corners.map((corner) => [corner.id, corner]));
   const sortedRows = [...payload.cornerFeedback].sort((a, b) => a.cornerId - b.cornerId);
 
   async function startCornerSummaryPageFitted(rowCount: number) {
     const page = addPage();
 
-    const titleY = pageHeight - 40;
     page.drawText("Corner Summary", {
       x: margin,
-      y: titleY,
+      y: pageHeight - 40,
       size: 18,
       font: bold,
       color: colors.text,
     });
 
     const tableX = margin;
-    const mapGap = 18;
     const tableW = 420;
+    const mapGap = 18;
     const mapX = tableX + tableW + mapGap;
     const mapW = pageWidth - margin - mapX;
     const notesY = 24;
@@ -557,15 +547,7 @@ async function buildDebriefPdf(payload: {
 
     drawPanel(page, mapX, notesY, mapW, notesH, "Incident Notes");
 
-    const rightIncidentLines =
-      payload.incidentMarkers.length > 0
-        ? payload.incidentMarkers.flatMap((marker, index) =>
-            wrapText(
-              `H${index + 1}: ${marker.note?.trim() ? marker.note.trim() : "No note"}`,
-              24
-            )
-          )
-        : ["No incident markers added"];
+    const rightIncidentLines = formatIncidentLines(payload.incidentMarkers, 24);
 
     rightIncidentLines.slice(0, 4).forEach((line, i) => {
       page.drawText(line, {
@@ -582,9 +564,12 @@ async function buildDebriefPdf(payload: {
     const tableBottomY = 28;
     const availableTableHeight = tableTopAfterHeader - tableBottomY;
     const rowGap = 4;
+    const safeRowCount = Math.max(rowCount, 1);
+
     const fittedRowHeight = Math.floor(
-      (availableTableHeight - rowGap * (rowCount - 1)) / rowCount
+      (availableTableHeight - rowGap * (safeRowCount - 1)) / safeRowCount
     );
+
     const rowHeight = Math.max(18, Math.min(30, fittedRowHeight));
     const chipHeight = Math.max(12, rowHeight - 8);
     const chipWidthTurn = 34;
@@ -692,8 +677,7 @@ async function buildDebriefPdf(payload: {
     });
 
     const cornerMeta = cornerLookup.get(row.cornerId);
-    const chipY =
-      rowY - summaryLayout.rowHeight / 2 - summaryLayout.chipHeight / 2 + 2;
+    const chipY = rowY - summaryLayout.rowHeight / 2 - summaryLayout.chipHeight / 2 + 2;
 
     drawTurnChip(
       summaryLayout.page,
@@ -863,10 +847,7 @@ export async function POST(request: Request) {
     } = body;
 
     if (!driverName || !primaryRecipientEmail || !trackName) {
-      return NextResponse.json(
-        { error: "Missing required fields." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
     }
 
     const intendedRecipients = [
@@ -918,11 +899,14 @@ export async function POST(request: Request) {
       cornerFeedback: cornerFeedback ?? [],
     });
 
-    const safeFileName = `${new Date().toISOString().split("T")[0]}_${driverName}_${trackName}_DebriefSheet_${sessionName}_${fastestLapTime?.trim() || "NoLap"}.pdf`
-      .replace(/[\/\\:*?"<>|]/g, "-")
-      .replace(/\s+/g, "_")
-      .replace(/\.+/g, ".")
-      .toLowerCase();
+    const safeFileName =
+      `${new Date().toISOString().split("T")[0]}_${driverName}_${trackName}_DebriefSheet_${sessionName}_${
+        fastestLapTime?.trim() || "NoLap"
+      }.pdf`
+        .replace(/[\/\\:*?"<>|]/g, "-")
+        .replace(/\s+/g, "_")
+        .replace(/\.+/g, ".")
+        .toLowerCase();
 
     await transporter.sendMail({
       from: `"Debrief App" <${gmailUser}>`,
