@@ -49,6 +49,19 @@ type TrackTemplate = {
 
 type PhaseMode = "entry" | "mid" | "exit" | "average" | "all";
 type ViewTab = "balanceComparison" | "balanceAnalysis";
+
+type SortMode =
+  | "submissionNewest"
+  | "submissionOldest"
+  | "driverAZ"
+  | "driverZA"
+  | "sessionAZ"
+  | "sessionZA"
+  | "trackAZ"
+  | "trackZA"
+  | "teamAZ"
+  | "teamZA";
+
 type CarColourMap = Record<string, string>;
 type DriverDeltaMap = Record<string, Record<number, string>>;
 
@@ -84,7 +97,9 @@ function averageValid(values: Array<number | null | undefined>): number | null {
   const valid = values.filter(
     (v): v is number => v !== null && v !== undefined && !Number.isNaN(v)
   );
+
   if (!valid.length) return null;
+
   return valid.reduce((sum, v) => sum + v, 0) / valid.length;
 }
 
@@ -109,6 +124,7 @@ function getPointValue(
   if (phaseMode === "entry") return entry;
   if (phaseMode === "mid") return mid;
   if (phaseMode === "exit") return exit;
+
   return averageValid([entry, mid, exit]);
 }
 
@@ -138,10 +154,17 @@ function formatDeltaCell(value: number | null): string {
 
 function readDelta(raw: string | undefined): number | null {
   if (!raw) return null;
+
   const trimmed = raw.trim();
   if (!trimmed) return null;
+
   const parsed = Number(trimmed);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function getCreatedAtTime(value: string): number {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
 }
 
 export default function CornerBalanceComparisonChart() {
@@ -152,6 +175,7 @@ export default function CornerBalanceComparisonChart() {
   const [teamFilter, setTeamFilter] = useState("all");
   const [yearFilter, setYearFilter] = useState("all");
   const [trackFilter, setTrackFilter] = useState("all");
+  const [sortMode, setSortMode] = useState<SortMode>("submissionNewest");
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [phaseMode, setPhaseMode] = useState<PhaseMode>("average");
@@ -160,6 +184,7 @@ export default function CornerBalanceComparisonChart() {
 
   const [referenceId, setReferenceId] = useState<string | null>(null);
   const [driverDeltas, setDriverDeltas] = useState<DriverDeltaMap>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [trackTemplate, setTrackTemplate] = useState<TrackTemplate | null>(null);
   const [trackMapAspectRatio, setTrackMapAspectRatio] = useState<number>(1);
@@ -225,13 +250,37 @@ export default function CornerBalanceComparisonChart() {
   }, [debriefs]);
 
   const filteredDebriefs = useMemo(() => {
-    return debriefs.filter((d) => {
+    const filtered = debriefs.filter((d) => {
       if (teamFilter !== "all" && d.team !== teamFilter) return false;
       if (yearFilter !== "all" && d.derived_year !== yearFilter) return false;
       if (trackFilter !== "all" && d.track_name !== trackFilter) return false;
       return true;
     });
-  }, [debriefs, teamFilter, yearFilter, trackFilter]);
+
+    return [...filtered].sort((a, b) => {
+      if (sortMode === "submissionNewest") {
+        return getCreatedAtTime(b.created_at) - getCreatedAtTime(a.created_at);
+      }
+
+      if (sortMode === "submissionOldest") {
+        return getCreatedAtTime(a.created_at) - getCreatedAtTime(b.created_at);
+      }
+
+      if (sortMode === "driverAZ") return a.driver_name.localeCompare(b.driver_name);
+      if (sortMode === "driverZA") return b.driver_name.localeCompare(a.driver_name);
+
+      if (sortMode === "sessionAZ") return a.session_name.localeCompare(b.session_name);
+      if (sortMode === "sessionZA") return b.session_name.localeCompare(a.session_name);
+
+      if (sortMode === "trackAZ") return a.track_name.localeCompare(b.track_name);
+      if (sortMode === "trackZA") return b.track_name.localeCompare(a.track_name);
+
+      if (sortMode === "teamAZ") return a.team.localeCompare(b.team);
+      if (sortMode === "teamZA") return b.team.localeCompare(a.team);
+
+      return 0;
+    });
+  }, [debriefs, teamFilter, yearFilter, trackFilter, sortMode]);
 
   useEffect(() => {
     setSelectedIds((prev) => prev.filter((id) => filteredDebriefs.some((d) => d.id === id)));
@@ -318,6 +367,7 @@ export default function CornerBalanceComparisonChart() {
 
       selectedDebriefs.forEach((debrief) => {
         next[debrief.id] = {};
+
         allCornerNumbers.forEach((corner) => {
           next[debrief.id][corner] = prev[debrief.id]?.[corner] ?? "";
         });
@@ -387,6 +437,7 @@ export default function CornerBalanceComparisonChart() {
 
     const index = allCornerNumbers.findIndex((c) => c === cornerNumber);
     const step = plotWidth / (allCornerNumbers.length - 1);
+
     return chartGeometry.leftPadding + index * step;
   }
 
@@ -396,6 +447,7 @@ export default function CornerBalanceComparisonChart() {
     }
 
     const step = plotWidth / (sequentialXAxis.length - 1);
+
     return chartGeometry.leftPadding + index * step;
   }
 
@@ -403,6 +455,7 @@ export default function CornerBalanceComparisonChart() {
     const min = -3;
     const max = 3;
     const normalized = (value - min) / (max - min);
+
     return chartGeometry.topPadding + plotHeight - normalized * plotHeight;
   }
 
@@ -411,6 +464,53 @@ export default function CornerBalanceComparisonChart() {
       if (prev.includes(id)) return prev.filter((item) => item !== id);
       return [...prev, id];
     });
+  }
+
+  async function deleteDebrief(id: string) {
+    const target = debriefs.find((d) => d.id === id);
+
+    const confirmed = window.confirm(
+      `Delete this submitted debrief?\n\n${
+        target ? formatDebriefLabel(target) : id
+      }\n\nThis cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingId(id);
+    setError(null);
+
+    const { error: deleteError } = await supabase
+      .from("submitted_debriefs")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      setDeletingId(null);
+      return;
+    }
+
+    setDebriefs((prev) => prev.filter((row) => row.id !== id));
+    setSelectedIds((prev) => prev.filter((selectedId) => selectedId !== id));
+
+    setCarColours((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    setDriverDeltas((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    if (referenceId === id) {
+      setReferenceId(null);
+    }
+
+    setDeletingId(null);
   }
 
   function updateColour(id: string, colour: string) {
@@ -517,6 +617,7 @@ export default function CornerBalanceComparisonChart() {
 
   const deltaPlotWidth =
     deltaChartGeometry.width - deltaChartGeometry.leftPadding - deltaChartGeometry.rightPadding;
+
   const deltaPlotHeight =
     deltaChartGeometry.height - deltaChartGeometry.topPadding - deltaChartGeometry.bottomPadding;
 
@@ -527,6 +628,7 @@ export default function CornerBalanceComparisonChart() {
 
     const index = allCornerNumbers.findIndex((c) => c === cornerNumber);
     const step = deltaPlotWidth / (allCornerNumbers.length - 1);
+
     return deltaChartGeometry.leftPadding + index * step;
   }
 
@@ -534,6 +636,7 @@ export default function CornerBalanceComparisonChart() {
     const min = -roundedDeltaMax;
     const max = roundedDeltaMax;
     const normalized = (value - min) / (max - min || 1);
+
     return deltaChartGeometry.topPadding + deltaPlotHeight - normalized * deltaPlotHeight;
   }
 
@@ -541,14 +644,6 @@ export default function CornerBalanceComparisonChart() {
     return (
       <div className="rounded-2xl border border-white/10 bg-[#0b1220] p-6 text-white">
         Loading balance comparison chart...
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-red-500/30 bg-[#0b1220] p-6 text-red-300">
-        Failed to load debriefs: {error}
       </div>
     );
   }
@@ -562,7 +657,13 @@ export default function CornerBalanceComparisonChart() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      {error && (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-5">
         <div>
           <label className="mb-2 block text-sm font-medium text-white/75">Team</label>
           <select
@@ -622,12 +723,99 @@ export default function CornerBalanceComparisonChart() {
             <option value="exit">Exit</option>
           </select>
         </div>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium text-white/75">Sort</label>
+          <select
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as SortMode)}
+            className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none transition focus:border-white/25"
+          >
+            <option value="submissionNewest">Newest submission</option>
+            <option value="submissionOldest">Oldest submission</option>
+            <option value="driverAZ">Driver name A-Z</option>
+            <option value="driverZA">Driver name Z-A</option>
+            <option value="sessionAZ">Session name A-Z</option>
+            <option value="sessionZA">Session name Z-A</option>
+            <option value="trackAZ">Circuit A-Z</option>
+            <option value="trackZA">Circuit Z-A</option>
+            <option value="teamAZ">Team A-Z</option>
+            <option value="teamZA">Team Z-A</option>
+          </select>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
             Available Debriefs
+          </h3>
+          <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
+        </div>
+
+        <div className="grid max-h-[320px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+          {filteredDebriefs.map((row) => {
+            const checked = selectedIds.includes(row.id);
+
+            return (
+              <div
+                key={row.id}
+                className={`flex items-start gap-3 rounded-xl border px-3 py-3 transition ${
+                  checked
+                    ? "border-white/20 bg-white/8"
+                    : "border-white/8 bg-white/[0.03] hover:bg-white/[0.05]"
+                }`}
+              >
+                <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSelection(row.id)}
+                    className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent"
+                  />
+
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-white">
+                      {row.driver_name}
+                    </div>
+                    <div className="truncate text-xs text-white/55">
+                      {row.session_name} · {row.track_name} · {row.team} · {row.derived_year}
+                    </div>
+                    <div className="mt-1 text-[11px] text-white/35">
+                      Submitted:{" "}
+                      {row.created_at
+                        ? new Date(row.created_at).toLocaleString("en-GB", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })
+                        : "Unknown"}
+                    </div>
+                  </div>
+                </label>
+
+                <button
+                  type="button"
+                  disabled={deletingId === row.id}
+                  onClick={() => deleteDebrief(row.id)}
+                  className="shrink-0 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingId === row.id ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            );
+          })}
+
+          {!filteredDebriefs.length && (
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] p-4 text-sm text-white/50">
+              No debriefs match the current filters.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Keep the rest of your existing chart, colour, tabs, track map, analysis and legend JSX below this point unchanged. */}
+    </div>
+             Available Debriefs
           </h3>
           <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
         </div>
