@@ -86,7 +86,6 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   }
 
   if (current) lines.push(current);
-
   return lines;
 }
 
@@ -528,8 +527,9 @@ async function buildDebriefPdf(payload: {
     const mapGap = 18;
     const mapX = tableX + tableW + mapGap;
     const mapW = pageWidth - margin - mapX;
-    const notesY = 24;
-    const notesH = 78;
+
+    const commentsY = 24;
+    const commentsH = 78;
     const mapY = 110;
     const mapH = 420;
 
@@ -545,19 +545,19 @@ async function buildDebriefPdf(payload: {
       "Track Map"
     );
 
-    drawPanel(page, mapX, notesY, mapW, notesH, "Incident Notes");
+    drawPanel(page, mapX, commentsY, mapW, commentsH, "General Comments");
 
-    const rightIncidentLines = formatIncidentLines(payload.incidentMarkers, 24);
-
-    rightIncidentLines.slice(0, 4).forEach((line, i) => {
-      page.drawText(line, {
-        x: mapX + 14,
-        y: notesY + notesH - 42 - i * 11,
-        size: 8,
-        font,
-        color: colors.muted,
+    wrapText(payload.overallComments || "-", 34)
+      .slice(0, 4)
+      .forEach((line, i) => {
+        page.drawText(line, {
+          x: mapX + 14,
+          y: commentsY + commentsH - 42 - i * 11,
+          size: 8,
+          font,
+          color: colors.muted,
+        });
       });
-    });
 
     const headerTopY = pageHeight - 68;
     const tableTopAfterHeader = headerTopY - 28;
