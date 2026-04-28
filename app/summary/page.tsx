@@ -813,50 +813,6 @@ export default function CornerBalanceComparisonChart() {
         </div>
       </div>
 
-      {/* Keep the rest of your existing chart, colour, tabs, track map, analysis and legend JSX below this point unchanged. */}
-    </div>
-             Available Debriefs
-          </h3>
-          <span className="text-xs text-white/45">{selectedDebriefs.length} selected</span>
-        </div>
-
-        <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
-          {filteredDebriefs.map((row) => {
-            const checked = selectedIds.includes(row.id);
-
-            return (
-              <label
-                key={row.id}
-                className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition ${
-                  checked
-                    ? "border-white/20 bg-white/8"
-                    : "border-white/8 bg-white/[0.03] hover:bg-white/[0.05]"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleSelection(row.id)}
-                  className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent"
-                />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-white">{row.driver_name}</div>
-                  <div className="truncate text-xs text-white/55">
-                    {row.session_name} · {row.track_name} · {row.team} · {row.derived_year}
-                  </div>
-                </div>
-              </label>
-            );
-          })}
-
-          {!filteredDebriefs.length && (
-            <div className="rounded-xl border border-white/8 bg-white/[0.03] p-4 text-sm text-white/50">
-              No debriefs match the current filters.
-            </div>
-          )}
-        </div>
-      </div>
-
       {selectedDebriefs.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-[#0f172a] p-4">
           <div className="mb-4">
@@ -1442,36 +1398,27 @@ export default function CornerBalanceComparisonChart() {
                           </th>
                         </tr>
                         <tr>
-                          <th className="bg-[#101826] px-4 py-3 text-left text-xs text-white/45">
-                            Corner
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Entry
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Mid
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Exit
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Avg
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Entry
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Mid
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Exit
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Avg
-                          </th>
-                          <th className="border-l border-white/10 bg-[#101826] px-3 py-3 text-center text-xs text-white/45">
-                            Input
-                          </th>
+                          {[
+                            "Corner",
+                            "Entry",
+                            "Mid",
+                            "Exit",
+                            "Avg",
+                            "Entry",
+                            "Mid",
+                            "Exit",
+                            "Avg",
+                            "Input",
+                          ].map((heading, index) => (
+                            <th
+                              key={heading + index}
+                              className={`bg-[#101826] px-3 py-3 text-xs text-white/45 ${
+                                index === 0 ? "text-left" : "border-l border-white/10 text-center"
+                              }`}
+                            >
+                              {heading}
+                            </th>
+                          ))}
                         </tr>
                       </thead>
 
@@ -1484,47 +1431,28 @@ export default function CornerBalanceComparisonChart() {
                               <td className={`${bgClass} px-4 py-3 text-sm font-medium text-white`}>
                                 T{row.corner}
                               </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
-                              >
-                                {formatBalanceCell(row.refEntry)}
-                              </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
-                              >
-                                {formatBalanceCell(row.refMid)}
-                              </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
-                              >
-                                {formatBalanceCell(row.refExit)}
-                              </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white`}
-                              >
-                                {formatBalanceCell(row.refAverage)}
-                              </td>
 
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
-                              >
-                                {formatBalanceCell(row.cmpEntry)}
-                              </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
-                              >
-                                {formatBalanceCell(row.cmpMid)}
-                              </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm text-white/85`}
-                              >
-                                {formatBalanceCell(row.cmpExit)}
-                              </td>
-                              <td
-                                className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white`}
-                              >
-                                {formatBalanceCell(row.cmpAverage)}
-                              </td>
+                              {[
+                                row.refEntry,
+                                row.refMid,
+                                row.refExit,
+                                row.refAverage,
+                                row.cmpEntry,
+                                row.cmpMid,
+                                row.cmpExit,
+                                row.cmpAverage,
+                              ].map((value, cellIndex) => (
+                                <td
+                                  key={`cell-${compared.id}-${row.corner}-${cellIndex}`}
+                                  className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm ${
+                                    cellIndex === 3 || cellIndex === 7
+                                      ? "font-semibold text-white"
+                                      : "text-white/85"
+                                  }`}
+                                >
+                                  {formatBalanceCell(value)}
+                                </td>
+                              ))}
 
                               <td
                                 className={`${bgClass} border-l border-white/10 px-3 py-3 text-center text-sm font-semibold text-white`}
@@ -1636,6 +1564,7 @@ export default function CornerBalanceComparisonChart() {
 
                   {allCornerNumbers.map((corner) => {
                     const x = deltaXScale(corner);
+
                     return (
                       <g key={`delta-corner-${corner}`}>
                         <line
