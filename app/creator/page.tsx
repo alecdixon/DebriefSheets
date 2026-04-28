@@ -5,11 +5,19 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type TurnColor = "normal" | "blue" | "green" | "red";
+type EditMode = "label" | "trackPoint";
 
 type Corner = {
   id: number;
+
+  // Actual corner point on the track
   x: number;
   y: number;
+
+  // Visual label position
+  labelX?: number;
+  labelY?: number;
+
   color: TurnColor;
 };
 
@@ -30,17 +38,32 @@ function colourButtonClass(active: boolean) {
     : "border-[#2A3441] bg-[#1B2430] text-white";
 }
 
+function modeButtonClass(active: boolean) {
+  return active
+    ? "border-yellow-400 bg-yellow-400 text-black"
+    : "border-[#2A3441] bg-[#1B2430] text-white";
+}
+
 function markerClass(color: TurnColor) {
   switch (color) {
     case "blue":
-      return "bg-blue-600 text-white border-blue-400";
+      return "bg-blue-600 text-white border-blue-300";
     case "green":
-      return "bg-green-600 text-white border-green-400";
+      return "bg-green-600 text-white border-green-300";
     case "red":
-      return "bg-red-600 text-white border-red-400";
+      return "bg-red-600 text-white border-red-300";
     default:
-      return "bg-black text-white border-white/20";
+      return "bg-red-600 text-white border-white";
   }
+}
+
+function normaliseCorner(corner: Corner): Corner {
+  return {
+    ...corner,
+    labelX: typeof corner.labelX === "number" ? corner.labelX : corner.x,
+    labelY: typeof corner.labelY === "number" ? corner.labelY : corner.y,
+    color: corner.color ?? "normal",
+  };
 }
 
 function buildInitialCorners(count: number): Corner[] {
@@ -60,13 +83,15 @@ function buildInitialCorners(count: number): Corner[] {
       id: i + 1,
       x,
       y,
-      color: "normal" as TurnColor,
+      labelX: x,
+      labelY: y,
+      color: "normal",
     };
   });
 }
 
 function sortCornersById(corners: Corner[]): Corner[] {
-  return [...corners].sort((a, b) => a.id - b.id);
+  return [...corners].map(normaliseCorner).sort((a, b) => a.id - b.id);
 }
 
 export default function CreatorPage() {
@@ -78,6 +103,8 @@ export default function CreatorPage() {
   const [turnCount, setTurnCount] = useState("10");
   const [corners, setCorners] = useState<Corner[]>([]);
   const [selectedColour, setSelectedColour] = useState<TurnColor>("normal");
+  const [editMode, setEditMode] = useState<EditMode>("label");
+  const [showHelp, setShowHelp] = useState(false);
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -124,11 +151,6 @@ export default function CreatorPage() {
     setLoadingTemplates(false);
   }
 
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.id === selectedTemplateId) ?? null,
-    [templates, selectedTemplateId]
-  );
-
   function resetForm() {
     setSelectedTemplateId(null);
     setTeam("GB3");
@@ -137,18 +159,21 @@ export default function CreatorPage() {
     setTurnCount("10");
     setCorners([]);
     setSelectedColour("normal");
+    setEditMode("label");
     setGeneratedLink("");
     setMapAspectRatio(1.6);
     setStatus("");
   }
 
   function loadTemplateIntoForm(template: Template) {
+    const cleanCorners = sortCornersById((template.corners ?? []) as Corner[]);
+
     setSelectedTemplateId(template.id);
     setTeam(template.team || "GB3");
     setTrackName(template.track_name || "");
     setTrackMapDataUrl(template.track_map_url || "");
-    setCorners(sortCornersById((template.corners ?? []) as Corner[]));
-    setTurnCount(String(template.corner_count || (template.corners ?? []).length || 0));
+    setCorners(cleanCorners);
+    setTurnCount(String(template.corner_count || cleanCorners.length || 0));
     setGeneratedLink(`${origin}/driver/${template.id}`);
     setStatus(`Editing template: ${template.track_name}`);
   }
@@ -167,13 +192,16 @@ export default function CreatorPage() {
     }
 
     const reader = new FileReader();
+
     reader.onload = () => {
       const result = reader.result;
+
       if (typeof result === "string") {
         setTrackMapDataUrl(result);
         setStatus(`Loaded track map: ${file.name}`);
       }
     };
+
     reader.readAsDataURL(file);
   }
 
@@ -186,7 +214,23 @@ export default function CreatorPage() {
     }
 
     setCorners(buildInitialCorners(count));
-    setStatus(`${count} turns generated. Drag them onto the corners.`);
+    setStatus(`${count} turns generated. Use Move Track Points first, then Move Labels.`);
+  }
+
+  function getPercentPosition(
+    clientX: number,
+    clientY: number,
+    container: HTMLDivElement
+  ) {
+    const rect = container.getBoundingClientRect();
+
+    const x = ((clientX - rect.left) / rect.width) * 100;
+    const y = ((clientY - rect.top) / rect.height) * 100;
+
+    return {
+      x: Math.max(2, Math.min(98, x)),
+      y: Math.max(2, Math.min(98, y)),
+    };
   }
 
   function updateCornerPosition(
@@ -195,17 +239,26 @@ export default function CreatorPage() {
     clientY: number,
     container: HTMLDivElement
   ) {
-    const rect = container.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    const y = ((clientY - rect.top) / rect.height) * 100;
-
-    const clampedX = Math.max(3, Math.min(97, x));
-    const clampedY = Math.max(4, Math.min(96, y));
+    const position = getPercentPosition(clientX, clientY, container);
 
     setCorners((prev) =>
-      prev.map((corner) =>
-        corner.id === cornerId ? { ...corner, x: clampedX, y: clampedY } : corner
-      )
+      prev.map((corner) => {
+        if (corner.id !== cornerId) return corner;
+
+        if (editMode === "trackPoint") {
+          return {
+            ...corner,
+            x: position.x,
+            y: position.y,
+          };
+        }
+
+        return {
+          ...corner,
+          labelX: position.x,
+          labelY: position.y,
+        };
+      })
     );
   }
 
@@ -214,11 +267,14 @@ export default function CreatorPage() {
     cornerId: number
   ) {
     e.stopPropagation();
+
     dragRef.current = {
       pointerId: e.pointerId,
       cornerId,
       moved: false,
     };
+
+    e.currentTarget.setPointerCapture(e.pointerId);
   }
 
   function handlePreviewPointerMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -261,6 +317,18 @@ export default function CreatorPage() {
 
   function removeSpecificCorner(cornerId: number) {
     setCorners((prev) => prev.filter((corner) => corner.id !== cornerId));
+  }
+
+  function resetLabelPositionsToTrackPoints() {
+    setCorners((prev) =>
+      prev.map((corner) => ({
+        ...corner,
+        labelX: corner.x,
+        labelY: corner.y,
+      }))
+    );
+
+    setStatus("Label positions reset to track points.");
   }
 
   async function handleSaveTemplate() {
@@ -349,6 +417,7 @@ export default function CreatorPage() {
 
   function handleCopyLink() {
     if (!generatedLink) return;
+
     navigator.clipboard.writeText(generatedLink);
     setStatus("Link copied to clipboard.");
   }
@@ -357,10 +426,7 @@ export default function CreatorPage() {
     const confirmed = window.confirm("Delete this template?");
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("debrief_templates")
-      .delete()
-      .eq("id", templateId);
+    const { error } = await supabase.from("debrief_templates").delete().eq("id", templateId);
 
     if (error) {
       setStatus(`Failed to delete template: ${error.message}`);
@@ -382,21 +448,64 @@ export default function CreatorPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#E10600]">
             Rodin Motorsport
           </p>
-          <h1 className="mt-3 text-3xl font-bold tracking-tight md:text-5xl">
-            Debrief Template Creator
-          </h1>
-          <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
-            Create a team template, position T1/T2/T3 markers on the map, colour-code them,
-            save to Supabase, and generate a shareable driver page link.
-          </p>
+
+          <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight md:text-5xl">
+                Debrief Template Creator
+              </h1>
+              <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
+                Create a team template, position track points, move labels for clarity,
+                save to Supabase, and generate a driver page link.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowHelp((prev) => !prev)}
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
+            >
+              {showHelp ? "Hide Help" : "Help / Setup Guide"}
+            </button>
+          </div>
+
+          {showHelp && (
+            <div className="mt-6 rounded-3xl border border-yellow-400/30 bg-yellow-400/10 p-5 text-sm leading-6 text-yellow-50">
+              <h2 className="text-lg font-semibold text-white">How to set up the map</h2>
+
+              <ol className="mt-3 list-decimal space-y-2 pl-5">
+                <li>Select the team, enter the track name, and upload the track map image.</li>
+                <li>Enter the number of turns, then press <strong>Generate Turns</strong>.</li>
+                <li>
+                  Select <strong>Move Track Points</strong> and drag each T-number onto the
+                  actual corner position on the circuit.
+                </li>
+                <li>
+                  Select <strong>Move Labels</strong> and drag the labels away from crowded
+                  areas. A leader line will show which part of the track each label belongs to.
+                </li>
+                <li>
+                  Tap a label without dragging to apply the selected colour: normal, blue,
+                  green, or red.
+                </li>
+                <li>
+                  Save the template. The driver page and generated PDF will use the improved
+                  label positions.
+                </li>
+              </ol>
+
+              <p className="mt-3 text-yellow-100">
+                Good workflow: place accurate track points first, then tidy the labels afterwards.
+                This is especially useful for clustered corners like Silverstone T2–T6 and T13–T15.
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-white">
-                Team
-              </label>
+              <label className="mb-2 block text-sm font-medium text-white">Team</label>
               <select
                 value={team}
                 onChange={(e) => setTeam(e.target.value)}
@@ -411,9 +520,7 @@ export default function CreatorPage() {
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-white">
-                Track Name
-              </label>
+              <label className="mb-2 block text-sm font-medium text-white">Track Name</label>
               <input
                 value={trackName}
                 onChange={(e) => setTrackName(e.target.value)}
@@ -425,9 +532,7 @@ export default function CreatorPage() {
 
           <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end">
             <div className="flex-1">
-              <label className="mb-2 block text-sm font-medium text-white">
-                Track Map
-              </label>
+              <label className="mb-2 block text-sm font-medium text-white">Track Map</label>
               <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -436,10 +541,12 @@ export default function CreatorPage() {
                 >
                   Select Track Map
                 </button>
+
                 <span className="self-center text-sm text-[#9CA3AF]">
                   JPG, PNG, WEBP supported
                 </span>
               </div>
+
               <input
                 ref={fileInputRef}
                 type="file"
@@ -477,7 +584,44 @@ export default function CreatorPage() {
             <div>
               <h2 className="text-2xl font-semibold text-white">Track Map Preview</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Drag T1, T2, T3... onto the corners. Tap a marker to set its current colour mode.
+                Use Move Track Points for the real corner position. Use Move Labels to make the
+                number labels readable.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setEditMode("trackPoint")}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${modeButtonClass(
+                  editMode === "trackPoint"
+                )}`}
+              >
+                Move Track Points
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEditMode("label")}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${modeButtonClass(
+                  editMode === "label"
+                )}`}
+              >
+                Move Labels
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-5 flex flex-col gap-4 rounded-3xl border border-[#2A3441] bg-[#111827] p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-white">
+                Current edit mode:{" "}
+                <span className="text-yellow-300">
+                  {editMode === "trackPoint" ? "Move Track Points" : "Move Labels"}
+                </span>
+              </p>
+              <p className="mt-1 text-sm text-[#9CA3AF]">
+                Tap a label without dragging to colour it using the selected colour below.
               </p>
             </div>
 
@@ -491,6 +635,7 @@ export default function CreatorPage() {
               >
                 Normal
               </button>
+
               <button
                 type="button"
                 onClick={() => setSelectedColour("blue")}
@@ -500,6 +645,7 @@ export default function CreatorPage() {
               >
                 Blue
               </button>
+
               <button
                 type="button"
                 onClick={() => setSelectedColour("green")}
@@ -509,6 +655,7 @@ export default function CreatorPage() {
               >
                 Green
               </button>
+
               <button
                 type="button"
                 onClick={() => setSelectedColour("red")}
@@ -535,32 +682,74 @@ export default function CreatorPage() {
                     <img
                       src={trackMapDataUrl}
                       alt="Track map preview"
-                      className="absolute inset-0 h-full w-full"
+                      className="absolute inset-0 h-full w-full select-none"
+                      draggable={false}
                       onLoad={(e) => {
                         const img = e.currentTarget;
+
                         if (img.naturalWidth > 0 && img.naturalHeight > 0) {
                           setMapAspectRatio(img.naturalWidth / img.naturalHeight);
                         }
                       }}
                     />
 
-                    {corners.map((corner) => (
-                      <button
-                        key={corner.id}
-                        type="button"
-                        onPointerDown={(e) => handleMarkerPointerDown(e, corner.id)}
-                        className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1.5 text-sm font-semibold shadow-lg transition sm:text-base ${markerClass(
-                          corner.color
-                        )}`}
-                        style={{
-                          left: `${corner.x}%`,
-                          top: `${corner.y}%`,
-                          touchAction: "none",
-                        }}
-                      >
-                        T{corner.id}
-                      </button>
-                    ))}
+                    <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                      {corners.map((corner) => {
+                        const cleanCorner = normaliseCorner(corner);
+                        const labelX = cleanCorner.labelX ?? cleanCorner.x;
+                        const labelY = cleanCorner.labelY ?? cleanCorner.y;
+
+                        return (
+                          <g key={`line-${corner.id}`}>
+                            <line
+                              x1={`${cleanCorner.x}%`}
+                              y1={`${cleanCorner.y}%`}
+                              x2={`${labelX}%`}
+                              y2={`${labelY}%`}
+                              stroke="rgba(255,255,255,0.75)"
+                              strokeWidth="1.5"
+                            />
+                            <circle
+                              cx={`${cleanCorner.x}%`}
+                              cy={`${cleanCorner.y}%`}
+                              r="4"
+                              fill="rgba(255,255,255,0.95)"
+                              stroke="rgba(0,0,0,0.85)"
+                              strokeWidth="1"
+                            />
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    {corners.map((corner) => {
+                      const cleanCorner = normaliseCorner(corner);
+                      const labelX = cleanCorner.labelX ?? cleanCorner.x;
+                      const labelY = cleanCorner.labelY ?? cleanCorner.y;
+
+                      return (
+                        <button
+                          key={cleanCorner.id}
+                          type="button"
+                          onPointerDown={(e) => handleMarkerPointerDown(e, cleanCorner.id)}
+                          className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 px-3 py-1.5 text-sm font-bold shadow-[0_0_14px_rgba(0,0,0,0.65)] transition sm:text-base ${markerClass(
+                            cleanCorner.color
+                          )}`}
+                          style={{
+                            left: `${editMode === "trackPoint" ? cleanCorner.x : labelX}%`,
+                            top: `${editMode === "trackPoint" ? cleanCorner.y : labelY}%`,
+                            touchAction: "none",
+                          }}
+                          title={
+                            editMode === "trackPoint"
+                              ? `Move actual track point for T${cleanCorner.id}`
+                              : `Move visible label for T${cleanCorner.id}`
+                          }
+                        >
+                          T{cleanCorner.id}
+                        </button>
+                      );
+                    })}
                   </>
                 ) : (
                   <div className="flex h-full min-h-[320px] items-center justify-center px-6 text-center text-sm text-[#9CA3AF]">
@@ -583,6 +772,14 @@ export default function CreatorPage() {
 
               <button
                 type="button"
+                onClick={resetLabelPositionsToTrackPoints}
+                className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-400"
+              >
+                Reset Labels to Track Points
+              </button>
+
+              <button
+                type="button"
                 onClick={resetCorners}
                 className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
               >
@@ -593,24 +790,35 @@ export default function CreatorPage() {
 
           {corners.length > 0 && (
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {corners.map((corner) => (
-                <div
-                  key={corner.id}
-                  className="flex items-center justify-between rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3"
-                >
-                  <div className="text-sm text-white">
-                    T{corner.id} — x {corner.x.toFixed(1)} / y {corner.y.toFixed(1)}
-                  </div>
+              {sortCornersById(corners).map((corner) => {
+                const cleanCorner = normaliseCorner(corner);
 
-                  <button
-                    type="button"
-                    onClick={() => removeSpecificCorner(corner.id)}
-                    className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 transition hover:bg-red-500/20"
+                return (
+                  <div
+                    key={cleanCorner.id}
+                    className="flex items-center justify-between rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3"
                   >
-                    Remove
-                  </button>
-                </div>
-              ))}
+                    <div className="text-sm text-white">
+                      <div>T{cleanCorner.id}</div>
+                      <div className="mt-1 text-xs text-[#9CA3AF]">
+                        Point {cleanCorner.x.toFixed(1)} / {cleanCorner.y.toFixed(1)}
+                      </div>
+                      <div className="text-xs text-[#9CA3AF]">
+                        Label {(cleanCorner.labelX ?? cleanCorner.x).toFixed(1)} /{" "}
+                        {(cleanCorner.labelY ?? cleanCorner.y).toFixed(1)}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeSpecificCorner(cleanCorner.id)}
+                      className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 transition hover:bg-red-500/20"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -623,7 +831,11 @@ export default function CreatorPage() {
               disabled={saving}
               className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600] disabled:opacity-60"
             >
-              {saving ? "Saving..." : selectedTemplateId ? "Update Template" : "Save Template to Supabase"}
+              {saving
+                ? "Saving..."
+                : selectedTemplateId
+                  ? "Update Template"
+                  : "Save Template to Supabase"}
             </button>
 
             <button
@@ -656,7 +868,7 @@ export default function CreatorPage() {
           </div>
 
           {generatedLink && (
-            <div className="mt-4 rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF] break-all">
+            <div className="mt-4 break-all rounded-2xl border border-[#2A3441] bg-[#1B2430] p-4 text-sm text-[#9CA3AF]">
               {generatedLink}
             </div>
           )}
@@ -694,6 +906,7 @@ export default function CreatorPage() {
                           <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
                             {template.team || "No team"}
                           </span>
+
                           <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
                             {template.corner_count} turns
                           </span>
