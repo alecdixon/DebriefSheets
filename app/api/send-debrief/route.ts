@@ -7,8 +7,15 @@ type TurnColor = "normal" | "blue" | "green" | "red";
 
 type Corner = {
   id: number;
+
+  // Actual track point
   x: number;
   y: number;
+
+  // Visible label position from creator page
+  labelX?: number;
+  labelY?: number;
+
   color?: TurnColor;
 };
 
@@ -323,32 +330,74 @@ async function buildDebriefPdf(payload: {
       });
 
       for (const corner of corners) {
-        const markerX = drawX + (corner.x / 100) * drawW;
-        const markerY = drawY + drawH - (corner.y / 100) * drawH;
+        const labelXPercent =
+          typeof corner.labelX === "number" ? corner.labelX : corner.x;
+
+        const labelYPercent =
+         typeof corner.labelY === "number" ? corner.labelY : corner.y;
+
+        const anchorX = drawX + (corner.x / 100) * drawW;
+        const anchorY = drawY + drawH - (corner.y / 100) * drawH;
+
+        const labelX = drawX + (labelXPercent / 100) * drawW;
+        const labelY = drawY + drawH - (labelYPercent / 100) * drawH;
+
         const markerRadius = width < 230 ? 9 : 12;
+        const anchorRadius = width < 230 ? 2.2 : 3.2;
+
+        const hasLeaderLine =
+          Math.abs(labelXPercent - corner.x) > 0.1 ||
+          Math.abs(labelYPercent - corner.y) > 0.1;
+
+        if (hasLeaderLine) {
+          page.drawLine({
+            start: { x: anchorX, y: anchorY },
+            end: { x: labelX, y: labelY },
+            thickness: width < 230 ? 0.7 : 1,
+            color: rgb(0.95, 0.95, 0.95),
+            opacity: 0.72,
+        });
 
         page.drawCircle({
-          x: markerX,
-          y: markerY,
-          size: markerRadius,
-          color: getTurnColor(corner.color),
-          borderColor: colors.text,
-          borderWidth: 1.3,
-        });
-
-        const label = String(corner.id);
-        const fontSize =
-          width < 230 ? (label.length >= 2 ? 6.5 : 7.5) : label.length >= 2 ? 8 : 9;
-        const textWidth = bold.widthOfTextAtSize(label, fontSize);
-
-        page.drawText(label, {
-          x: markerX - textWidth / 2,
-          y: markerY - fontSize / 2 + 1,
-          size: fontSize,
-          font: bold,
-          color: colors.text,
+        x: anchorX,
+        y: anchorY,
+        size: anchorRadius,
+        color: colors.text,
+        borderColor: colors.black,
+        borderWidth: 0.7,
         });
       }
+
+  page.drawCircle({
+    x: labelX,
+    y: labelY,
+    size: markerRadius,
+    color: getTurnColor(corner.color),
+    borderColor: colors.text,
+    borderWidth: 1.3,
+  });
+
+  const label = String(corner.id);
+
+  const fontSize =
+    width < 230
+      ? label.length >= 2
+        ? 6.5
+        : 7.5
+      : label.length >= 2
+        ? 8
+        : 9;
+
+  const textWidth = bold.widthOfTextAtSize(label, fontSize);
+
+    page.drawText(label, {
+      x: labelX - textWidth / 2,
+      y: labelY - fontSize / 2 + 1,
+      size: fontSize,
+      font: bold,
+      color: colors.text,
+    });
+  }
 
       for (let i = 0; i < incidentMarkers.length; i++) {
         const marker = incidentMarkers[i];
