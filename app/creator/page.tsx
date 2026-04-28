@@ -1,23 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type TurnColor = "normal" | "blue" | "green" | "red";
-type EditMode = "label" | "trackPoint";
 
 type Corner = {
   id: number;
-
-  // Actual corner point on the track
   x: number;
   y: number;
-
-  // Visual label position
   labelX?: number;
   labelY?: number;
-
   color: TurnColor;
 };
 
@@ -32,17 +26,7 @@ type Template = {
 
 const TEAM_OPTIONS = ["GB3", "GT3", "British F4", "FIA F3", "FIA F2", "FREC", "F1 Academy"];
 
-function colourButtonClass(active: boolean) {
-  return active
-    ? "border-[#E10600] bg-[#E10600] text-white"
-    : "border-[#2A3441] bg-[#1B2430] text-white";
-}
-
-function modeButtonClass(active: boolean) {
-  return active
-    ? "border-yellow-400 bg-yellow-400 text-black"
-    : "border-[#2A3441] bg-[#1B2430] text-white";
-}
+const COLOUR_ORDER: TurnColor[] = ["normal", "blue", "green", "red"];
 
 function markerClass(color: TurnColor) {
   switch (color) {
@@ -64,6 +48,10 @@ function normaliseCorner(corner: Corner): Corner {
     labelY: typeof corner.labelY === "number" ? corner.labelY : corner.y,
     color: corner.color ?? "normal",
   };
+}
+
+function sortCornersById(corners: Corner[]): Corner[] {
+  return [...corners].map(normaliseCorner).sort((a, b) => a.id - b.id);
 }
 
 function buildInitialCorners(count: number): Corner[] {
@@ -90,10 +78,6 @@ function buildInitialCorners(count: number): Corner[] {
   });
 }
 
-function sortCornersById(corners: Corner[]): Corner[] {
-  return [...corners].map(normaliseCorner).sort((a, b) => a.id - b.id);
-}
-
 export default function CreatorPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -102,12 +86,11 @@ export default function CreatorPage() {
   const [trackMapDataUrl, setTrackMapDataUrl] = useState("");
   const [turnCount, setTurnCount] = useState("10");
   const [corners, setCorners] = useState<Corner[]>([]);
-  const [selectedColour, setSelectedColour] = useState<TurnColor>("normal");
-  const [editMode, setEditMode] = useState<EditMode>("label");
-  const [showHelp, setShowHelp] = useState(false);
-
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+
+  const [anchorCornerId, setAnchorCornerId] = useState<number | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const [status, setStatus] = useState("");
   const [generatedLink, setGeneratedLink] = useState("");
@@ -151,6 +134,18 @@ export default function CreatorPage() {
     setLoadingTemplates(false);
   }
 
+  function getPercentPosition(clientX: number, clientY: number, container: HTMLDivElement) {
+    const rect = container.getBoundingClientRect();
+
+    const x = ((clientX - rect.left) / rect.width) * 100;
+    const y = ((clientY - rect.top) / rect.height) * 100;
+
+    return {
+      x: Math.max(2, Math.min(98, x)),
+      y: Math.max(2, Math.min(98, y)),
+    };
+  }
+
   function resetForm() {
     setSelectedTemplateId(null);
     setTeam("GB3");
@@ -158,8 +153,7 @@ export default function CreatorPage() {
     setTrackMapDataUrl("");
     setTurnCount("10");
     setCorners([]);
-    setSelectedColour("normal");
-    setEditMode("label");
+    setAnchorCornerId(null);
     setGeneratedLink("");
     setMapAspectRatio(1.6);
     setStatus("");
@@ -175,6 +169,7 @@ export default function CreatorPage() {
     setCorners(cleanCorners);
     setTurnCount(String(template.corner_count || cleanCorners.length || 0));
     setGeneratedLink(`${origin}/driver/${template.id}`);
+    setAnchorCornerId(null);
     setStatus(`Editing template: ${template.track_name}`);
   }
 
@@ -214,26 +209,13 @@ export default function CreatorPage() {
     }
 
     setCorners(buildInitialCorners(count));
-    setStatus(`${count} turns generated. Use Move Track Points first, then Move Labels.`);
+    setAnchorCornerId(null);
+    setStatus(
+      `${count} turns generated. Drag labels into clear positions. Right-click a label, then click the exact track point.`
+    );
   }
 
-  function getPercentPosition(
-    clientX: number,
-    clientY: number,
-    container: HTMLDivElement
-  ) {
-    const rect = container.getBoundingClientRect();
-
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    const y = ((clientY - rect.top) / rect.height) * 100;
-
-    return {
-      x: Math.max(2, Math.min(98, x)),
-      y: Math.max(2, Math.min(98, y)),
-    };
-  }
-
-  function updateCornerPosition(
+  function moveLabel(
     cornerId: number,
     clientX: number,
     clientY: number,
@@ -242,23 +224,15 @@ export default function CreatorPage() {
     const position = getPercentPosition(clientX, clientY, container);
 
     setCorners((prev) =>
-      prev.map((corner) => {
-        if (corner.id !== cornerId) return corner;
-
-        if (editMode === "trackPoint") {
-          return {
-            ...corner,
-            x: position.x,
-            y: position.y,
-          };
-        }
-
-        return {
-          ...corner,
-          labelX: position.x,
-          labelY: position.y,
-        };
-      })
+      prev.map((corner) =>
+        corner.id === cornerId
+          ? {
+              ...corner,
+              labelX: position.x,
+              labelY: position.y,
+            }
+          : corner
+      )
     );
   }
 
@@ -266,6 +240,8 @@ export default function CreatorPage() {
     e: React.PointerEvent<HTMLButtonElement>,
     cornerId: number
   ) {
+    if (e.button !== 0) return;
+
     e.stopPropagation();
 
     dragRef.current = {
@@ -282,29 +258,63 @@ export default function CreatorPage() {
     if (drag.pointerId !== e.pointerId || drag.cornerId === null) return;
 
     dragRef.current.moved = true;
-    updateCornerPosition(drag.cornerId, e.clientX, e.clientY, e.currentTarget);
+    moveLabel(drag.cornerId, e.clientX, e.clientY, e.currentTarget);
   }
 
   function handlePreviewPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
     if (drag.pointerId !== e.pointerId || drag.cornerId === null) return;
 
-    const cornerId = drag.cornerId;
-    const moved = drag.moved;
-
     dragRef.current = {
       pointerId: null,
       cornerId: null,
       moved: false,
     };
+  }
 
-    if (!moved) {
-      setCorners((prev) =>
-        prev.map((corner) =>
-          corner.id === cornerId ? { ...corner, color: selectedColour } : corner
-        )
-      );
-    }
+  function handleMapClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (anchorCornerId === null) return;
+
+    const position = getPercentPosition(e.clientX, e.clientY, e.currentTarget);
+
+    setCorners((prev) =>
+      prev.map((corner) =>
+        corner.id === anchorCornerId
+          ? {
+              ...corner,
+              x: position.x,
+              y: position.y,
+            }
+          : corner
+      )
+    );
+
+    setStatus(`Track point set for T${anchorCornerId}.`);
+    setAnchorCornerId(null);
+  }
+
+  function handleMarkerRightClick(e: React.MouseEvent<HTMLButtonElement>, cornerId: number) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setAnchorCornerId(cornerId);
+    setStatus(`Click the exact track point for T${cornerId}.`);
+  }
+
+  function cycleCornerColour(cornerId: number) {
+    setCorners((prev) =>
+      prev.map((corner) => {
+        if (corner.id !== cornerId) return corner;
+
+        const currentIndex = COLOUR_ORDER.indexOf(corner.color);
+        const nextColour = COLOUR_ORDER[(currentIndex + 1) % COLOUR_ORDER.length];
+
+        return {
+          ...corner,
+          color: nextColour,
+        };
+      })
+    );
   }
 
   function removeLastCorner() {
@@ -313,10 +323,15 @@ export default function CreatorPage() {
 
   function resetCorners() {
     setCorners([]);
+    setAnchorCornerId(null);
   }
 
   function removeSpecificCorner(cornerId: number) {
     setCorners((prev) => prev.filter((corner) => corner.id !== cornerId));
+
+    if (anchorCornerId === cornerId) {
+      setAnchorCornerId(null);
+    }
   }
 
   function resetLabelPositionsToTrackPoints() {
@@ -455,8 +470,8 @@ export default function CreatorPage() {
                 Debrief Template Creator
               </h1>
               <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
-                Create a team template, position track points, move labels for clarity,
-                save to Supabase, and generate a driver page link.
+                Create a team template, position readable corner labels, add leader lines, save to
+                Supabase, and generate a driver page link.
               </p>
             </div>
 
@@ -465,38 +480,47 @@ export default function CreatorPage() {
               onClick={() => setShowHelp((prev) => !prev)}
               className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600]"
             >
-              {showHelp ? "Hide Help" : "Help / Setup Guide"}
+              {showHelp ? "Hide Help" : "Help / Controls"}
             </button>
           </div>
 
           {showHelp && (
             <div className="mt-6 rounded-3xl border border-yellow-400/30 bg-yellow-400/10 p-5 text-sm leading-6 text-yellow-50">
-              <h2 className="text-lg font-semibold text-white">How to set up the map</h2>
+              <h2 className="text-lg font-semibold text-white">PC controls</h2>
 
-              <ol className="mt-3 list-decimal space-y-2 pl-5">
-                <li>Select the team, enter the track name, and upload the track map image.</li>
-                <li>Enter the number of turns, then press <strong>Generate Turns</strong>.</li>
-                <li>
-                  Select <strong>Move Track Points</strong> and drag each T-number onto the
-                  actual corner position on the circuit.
-                </li>
-                <li>
-                  Select <strong>Move Labels</strong> and drag the labels away from crowded
-                  areas. A leader line will show which part of the track each label belongs to.
-                </li>
-                <li>
-                  Tap a label without dragging to apply the selected colour: normal, blue,
-                  green, or red.
-                </li>
-                <li>
-                  Save the template. The driver page and generated PDF will use the improved
-                  label positions.
-                </li>
-              </ol>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-yellow-400/20 bg-black/20 p-4">
+                  <div className="font-semibold text-white">Left-drag label</div>
+                  <div className="mt-1 text-yellow-100">
+                    Moves the visible T-number label to a clearer position.
+                  </div>
+                </div>
 
-              <p className="mt-3 text-yellow-100">
-                Good workflow: place accurate track points first, then tidy the labels afterwards.
-                This is especially useful for clustered corners like Silverstone T2–T6 and T13–T15.
+                <div className="rounded-2xl border border-yellow-400/20 bg-black/20 p-4">
+                  <div className="font-semibold text-white">Right-click label</div>
+                  <div className="mt-1 text-yellow-100">
+                    Selects that corner so you can place its exact track point.
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-yellow-400/20 bg-black/20 p-4">
+                  <div className="font-semibold text-white">Left-click map after right-clicking</div>
+                  <div className="mt-1 text-yellow-100">
+                    Places the actual corner point and draws the leader line.
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-yellow-400/20 bg-black/20 p-4">
+                  <div className="font-semibold text-white">Double-click label</div>
+                  <div className="mt-1 text-yellow-100">
+                    Cycles colour: normal, blue, green, red.
+                  </div>
+                </div>
+              </div>
+
+              <p className="mt-4 text-yellow-100">
+                Recommended workflow: upload the map, generate turns, drag labels into readable
+                positions, then right-click each label and click its exact corner point on the track.
               </p>
             </div>
           )}
@@ -584,98 +608,34 @@ export default function CreatorPage() {
             <div>
               <h2 className="text-2xl font-semibold text-white">Track Map Preview</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Use Move Track Points for the real corner position. Use Move Labels to make the
-                number labels readable.
+                Left-drag labels to move them. Right-click a label, then click the exact track
+                point. Double-click a label to change colour.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setEditMode("trackPoint")}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${modeButtonClass(
-                  editMode === "trackPoint"
-                )}`}
-              >
-                Move Track Points
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setEditMode("label")}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${modeButtonClass(
-                  editMode === "label"
-                )}`}
-              >
-                Move Labels
-              </button>
-            </div>
-          </div>
-
-          <div className="mb-5 flex flex-col gap-4 rounded-3xl border border-[#2A3441] bg-[#111827] p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-white">
-                Current edit mode:{" "}
-                <span className="text-yellow-300">
-                  {editMode === "trackPoint" ? "Move Track Points" : "Move Labels"}
+            <div className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm text-[#9CA3AF]">
+              {anchorCornerId === null ? (
+                <span>No anchor selected</span>
+              ) : (
+                <span className="font-semibold text-yellow-300">
+                  Click map to place track point for T{anchorCornerId}
                 </span>
-              </p>
-              <p className="mt-1 text-sm text-[#9CA3AF]">
-                Tap a label without dragging to colour it using the selected colour below.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedColour("normal")}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
-                  selectedColour === "normal"
-                )}`}
-              >
-                Normal
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedColour("blue")}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
-                  selectedColour === "blue"
-                )}`}
-              >
-                Blue
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedColour("green")}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
-                  selectedColour === "green"
-                )}`}
-              >
-                Green
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedColour("red")}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${colourButtonClass(
-                  selectedColour === "red"
-                )}`}
-              >
-                Red
-              </button>
+              )}
             </div>
           </div>
 
           <div className="rounded-[24px] bg-[#111827] p-3 sm:p-4">
             <div className="mx-auto w-full max-w-[900px]">
               <div
-                className="relative w-full overflow-hidden rounded-[20px] border border-[#2A3441] bg-[#0F141C]"
+                className={`relative w-full overflow-hidden rounded-[20px] border bg-[#0F141C] ${
+                  anchorCornerId === null ? "border-[#2A3441]" : "border-yellow-400"
+                }`}
                 style={{ aspectRatio: String(mapAspectRatio) }}
+                onClick={handleMapClick}
                 onPointerMove={handlePreviewPointerMove}
                 onPointerUp={handlePreviewPointerUp}
                 onPointerLeave={handlePreviewPointerUp}
+                onContextMenu={(e) => e.preventDefault()}
               >
                 {trackMapDataUrl ? (
                   <>
@@ -700,20 +660,29 @@ export default function CreatorPage() {
                         const labelY = cleanCorner.labelY ?? cleanCorner.y;
 
                         return (
-                          <g key={`line-${corner.id}`}>
+                          <g key={`line-${cleanCorner.id}`}>
                             <line
                               x1={`${cleanCorner.x}%`}
                               y1={`${cleanCorner.y}%`}
                               x2={`${labelX}%`}
                               y2={`${labelY}%`}
-                              stroke="rgba(255,255,255,0.75)"
-                              strokeWidth="1.5"
+                              stroke={
+                                anchorCornerId === cleanCorner.id
+                                  ? "rgba(250, 204, 21, 0.95)"
+                                  : "rgba(255,255,255,0.72)"
+                              }
+                              strokeWidth={anchorCornerId === cleanCorner.id ? "2.4" : "1.5"}
                             />
+
                             <circle
                               cx={`${cleanCorner.x}%`}
                               cy={`${cleanCorner.y}%`}
-                              r="4"
-                              fill="rgba(255,255,255,0.95)"
+                              r={anchorCornerId === cleanCorner.id ? "6" : "4"}
+                              fill={
+                                anchorCornerId === cleanCorner.id
+                                  ? "rgba(250, 204, 21, 0.95)"
+                                  : "rgba(255,255,255,0.95)"
+                              }
                               stroke="rgba(0,0,0,0.85)"
                               strokeWidth="1"
                             />
@@ -732,19 +701,22 @@ export default function CreatorPage() {
                           key={cleanCorner.id}
                           type="button"
                           onPointerDown={(e) => handleMarkerPointerDown(e, cleanCorner.id)}
-                          className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 px-3 py-1.5 text-sm font-bold shadow-[0_0_14px_rgba(0,0,0,0.65)] transition sm:text-base ${markerClass(
-                            cleanCorner.color
-                          )}`}
+                          onContextMenu={(e) => handleMarkerRightClick(e, cleanCorner.id)}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            cycleCornerColour(cleanCorner.id);
+                          }}
+                          className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 px-3 py-1.5 text-sm font-bold shadow-[0_0_14px_rgba(0,0,0,0.75)] transition hover:scale-110 sm:text-base ${
+                            anchorCornerId === cleanCorner.id
+                              ? "ring-4 ring-yellow-300"
+                              : ""
+                          } ${markerClass(cleanCorner.color)}`}
                           style={{
-                            left: `${editMode === "trackPoint" ? cleanCorner.x : labelX}%`,
-                            top: `${editMode === "trackPoint" ? cleanCorner.y : labelY}%`,
+                            left: `${labelX}%`,
+                            top: `${labelY}%`,
                             touchAction: "none",
                           }}
-                          title={
-                            editMode === "trackPoint"
-                              ? `Move actual track point for T${cleanCorner.id}`
-                              : `Move visible label for T${cleanCorner.id}`
-                          }
+                          title={`T${cleanCorner.id}: drag to move label, right-click to set track point, double-click to colour`}
                         >
                           T{cleanCorner.id}
                         </button>
@@ -780,6 +752,17 @@ export default function CreatorPage() {
 
               <button
                 type="button"
+                onClick={() => {
+                  setAnchorCornerId(null);
+                  setStatus("Anchor selection cancelled.");
+                }}
+                className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-400"
+              >
+                Cancel Anchor Selection
+              </button>
+
+              <button
+                type="button"
                 onClick={resetCorners}
                 className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
               >
@@ -799,7 +782,7 @@ export default function CreatorPage() {
                     className="flex items-center justify-between rounded-2xl border border-[#2A3441] bg-[#1B2430] px-4 py-3"
                   >
                     <div className="text-sm text-white">
-                      <div>T{cleanCorner.id}</div>
+                      <div className="font-semibold">T{cleanCorner.id}</div>
                       <div className="mt-1 text-xs text-[#9CA3AF]">
                         Point {cleanCorner.x.toFixed(1)} / {cleanCorner.y.toFixed(1)}
                       </div>
