@@ -4,10 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
+type TurnColor = "normal" | "blue" | "green" | "red";
+
 type Corner = {
   id: number;
   x: number;
   y: number;
+  labelX?: number;
+  labelY?: number;
+  color?: TurnColor;
 };
 
 type Template = {
@@ -65,6 +70,30 @@ const balanceStops = [
   { value: 3, label: "OS 3" },
 ];
 
+function normaliseCorner(corner: Corner): Corner {
+  return {
+    ...corner,
+    labelX: typeof corner.labelX === "number" ? corner.labelX : corner.x,
+    labelY: typeof corner.labelY === "number" ? corner.labelY : corner.y,
+    color: corner.color ?? "normal",
+  };
+}
+
+function markerClass(color?: TurnColor, selected = false): string {
+  if (selected) return "border-[#E10600] bg-[#E10600]";
+
+  switch (color) {
+    case "blue":
+      return "border-blue-300 bg-blue-600";
+    case "green":
+      return "border-green-300 bg-green-600";
+    case "red":
+      return "border-red-300 bg-red-600";
+    default:
+      return "border-white bg-red-600";
+  }
+}
+
 function balanceValueToLabel(value: number): string {
   if (value <= -2.75) return "US 3";
   if (value <= -2.25) return "US 2.5";
@@ -113,14 +142,19 @@ function getErrorMessage(error: unknown): string {
 function isValidCornerArray(value: unknown): value is Corner[] {
   return (
     Array.isArray(value) &&
-    value.every(
-      (corner) =>
-        typeof corner === "object" &&
-        corner !== null &&
-        typeof (corner as Corner).id === "number" &&
-        typeof (corner as Corner).x === "number" &&
-        typeof (corner as Corner).y === "number"
-    )
+    value.every((corner) => {
+      if (typeof corner !== "object" || corner === null) return false;
+
+      const candidate = corner as Corner;
+
+      return (
+        typeof candidate.id === "number" &&
+        typeof candidate.x === "number" &&
+        typeof candidate.y === "number" &&
+        (candidate.labelX === undefined || typeof candidate.labelX === "number") &&
+        (candidate.labelY === undefined || typeof candidate.labelY === "number")
+      );
+    })
   );
 }
 
@@ -224,7 +258,9 @@ export default function DriverTemplatePage() {
           throw new Error("Template not found.");
         }
 
-        const corners = isValidCornerArray(templateData.corners) ? templateData.corners : [];
+        const corners = isValidCornerArray(templateData.corners)
+          ? templateData.corners.map(normaliseCorner)
+          : [];
 
         const cleanTemplate: Template = {
           id: String(templateData.id),
@@ -291,6 +327,7 @@ export default function DriverTemplatePage() {
 
   function removeIncidentMarker(incidentId: number) {
     setIncidentMarkers((prev) => prev.filter((marker) => marker.id !== incidentId));
+
     if (selectedIncidentId === incidentId) {
       setSelectedIncidentId(null);
     }
@@ -328,15 +365,19 @@ export default function DriverTemplatePage() {
 
   const recipientErrorMessage = useMemo(() => {
     if (!primaryRecipientId) return "";
+
     if (showExtraRecipient && extraRecipientId && primaryRecipientId === extraRecipientId) {
       return "Additional recipient must be different from the primary recipient.";
     }
+
     return "";
   }, [primaryRecipientId, showExtraRecipient, extraRecipientId]);
 
   function goToPreviousCorner() {
     if (!template || selectedCornerId === null) return;
+
     const currentIndex = template.corners.findIndex((c) => c.id === selectedCornerId);
+
     if (currentIndex > 0) {
       setSelectedCornerId(template.corners[currentIndex - 1].id);
       setSelectedIncidentId(null);
@@ -345,7 +386,9 @@ export default function DriverTemplatePage() {
 
   function goToNextCorner() {
     if (!template || selectedCornerId === null) return;
+
     const currentIndex = template.corners.findIndex((c) => c.id === selectedCornerId);
+
     if (currentIndex >= 0 && currentIndex < template.corners.length - 1) {
       setSelectedCornerId(template.corners[currentIndex + 1].id);
       setSelectedIncidentId(null);
@@ -420,6 +463,7 @@ export default function DriverTemplatePage() {
       const text = await response.text();
 
       let parsed: unknown = text;
+
       try {
         parsed = text ? JSON.parse(text) : null;
       } catch {
@@ -525,6 +569,7 @@ export default function DriverTemplatePage() {
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {reliabilityItems.map((item) => {
               const active = !!reliabilityFlags[item];
+
               return (
                 <button
                   key={item}
@@ -556,9 +601,11 @@ export default function DriverTemplatePage() {
               <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
                 {template.track_name}
               </div>
+
               <div className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1.5 text-white">
                 {completedCorners}/{template.corner_count} completed
               </div>
+
               <button
                 type="button"
                 onClick={() => {
@@ -605,9 +652,11 @@ export default function DriverTemplatePage() {
                   <img
                     src={template.track_map_url}
                     alt="Track map"
-                    className="absolute inset-0 h-full w-full"
+                    className="absolute inset-0 h-full w-full select-none"
+                    draggable={false}
                     onLoad={(e) => {
                       const img = e.currentTarget;
+
                       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
                         setMapAspectRatio(img.naturalWidth / img.naturalHeight);
                       }
@@ -615,28 +664,61 @@ export default function DriverTemplatePage() {
                   />
                 )}
 
-                {template.corners.map((corner) => (
-                  <button
-                    key={corner.id}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedCornerId(corner.id);
-                      setSelectedIncidentId(null);
-                    }}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border font-semibold text-white shadow-lg transition ${
-                      selectedCornerId === corner.id
-                        ? "border-[#E10600] bg-[#E10600]"
-                        : "border-[#2A3441] bg-[#141A22]/95"
-                    } px-2.5 py-1 text-sm sm:px-3 sm:py-1.5 sm:text-base`}
-                    style={{
-                      left: `${corner.x}%`,
-                      top: `${corner.y}%`,
-                    }}
-                  >
-                    T{corner.id}
-                  </button>
-                ))}
+                <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                  {template.corners.map((corner) => {
+                    const labelX = corner.labelX ?? corner.x;
+                    const labelY = corner.labelY ?? corner.y;
+
+                    return (
+                      <g key={`leader-${corner.id}`}>
+                        <line
+                          x1={`${corner.x}%`}
+                          y1={`${corner.y}%`}
+                          x2={`${labelX}%`}
+                          y2={`${labelY}%`}
+                          stroke="rgba(255,255,255,0.7)"
+                          strokeWidth="1.5"
+                        />
+
+                        <circle
+                          cx={`${corner.x}%`}
+                          cy={`${corner.y}%`}
+                          r="4"
+                          fill="rgba(255,255,255,0.95)"
+                          stroke="rgba(0,0,0,0.85)"
+                          strokeWidth="1"
+                        />
+                      </g>
+                    );
+                  })}
+                </svg>
+
+                {template.corners.map((corner) => {
+                  const labelX = corner.labelX ?? corner.x;
+                  const labelY = corner.labelY ?? corner.y;
+
+                  return (
+                    <button
+                      key={corner.id}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedCornerId(corner.id);
+                        setSelectedIncidentId(null);
+                      }}
+                      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 px-2.5 py-1 text-sm font-bold text-white shadow-[0_0_14px_rgba(0,0,0,0.75)] transition hover:scale-105 sm:px-3 sm:py-1.5 sm:text-base ${markerClass(
+                        corner.color,
+                        selectedCornerId === corner.id
+                      )}`}
+                      style={{
+                        left: `${labelX}%`,
+                        top: `${labelY}%`,
+                      }}
+                    >
+                      T{corner.id}
+                    </button>
+                  );
+                })}
 
                 {incidentMarkers.map((marker) => (
                   <button
@@ -829,6 +911,7 @@ export default function DriverTemplatePage() {
                   </option>
                 ))}
               </select>
+
               {primaryRecipient && (
                 <p className="mt-2 text-sm text-[#9CA3AF]">{primaryRecipient.email}</p>
               )}
