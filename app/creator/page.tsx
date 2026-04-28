@@ -109,6 +109,8 @@ export default function CreatorPage() {
     moved: false,
   });
 
+  const filteredTemplates = templates.filter((template) => template.team === team);
+
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
@@ -504,7 +506,9 @@ export default function CreatorPage() {
                 </div>
 
                 <div className="rounded-2xl border border-yellow-400/20 bg-black/20 p-4">
-                  <div className="font-semibold text-white">Left-click map after right-clicking</div>
+                  <div className="font-semibold text-white">
+                    Left-click map after right-clicking
+                  </div>
                   <div className="mt-1 text-yellow-100">
                     Places the actual corner point and draws the leader line.
                   </div>
@@ -707,9 +711,7 @@ export default function CreatorPage() {
                             cycleCornerColour(cleanCorner.id);
                           }}
                           className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 px-3 py-1.5 text-sm font-bold shadow-[0_0_14px_rgba(0,0,0,0.75)] transition hover:scale-110 sm:text-base ${
-                            anchorCornerId === cleanCorner.id
-                              ? "ring-4 ring-yellow-300"
-                              : ""
+                            anchorCornerId === cleanCorner.id ? "ring-4 ring-yellow-300" : ""
                           } ${markerClass(cleanCorner.color)}`}
                           style={{
                             left: `${labelX}%`,
@@ -866,16 +868,18 @@ export default function CreatorPage() {
         <section className="rounded-[28px] border border-[#2A3441] bg-[#141A22] p-5 shadow-2xl md:p-7">
           <h2 className="text-2xl font-semibold text-white">Saved Templates</h2>
           <p className="mt-2 text-sm text-[#9CA3AF]">
-            Load one to edit it, or open the live driver page.
+            Showing templates for {team}. Change the team selection at the top to filter this list.
           </p>
 
           {loadingTemplates ? (
             <p className="mt-5 text-sm text-[#9CA3AF]">Loading templates...</p>
-          ) : templates.length === 0 ? (
-            <p className="mt-5 text-sm text-[#9CA3AF]">No templates saved yet.</p>
+          ) : filteredTemplates.length === 0 ? (
+            <p className="mt-5 text-sm text-[#9CA3AF]">
+              No templates saved for {team} yet.
+            </p>
           ) : (
             <div className="mt-5 grid gap-4">
-              {templates.map((template) => {
+              {filteredTemplates.map((template) => {
                 const driverUrl = `${origin}/driver/${template.id}`;
 
                 return (
