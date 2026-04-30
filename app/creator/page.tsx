@@ -217,6 +217,34 @@ export default function CreatorPage() {
     );
   }
 
+  function addSingleCorner() {
+    const usedIds = new Set(corners.map((corner) => corner.id));
+
+    let nextId = 1;
+
+    while (usedIds.has(nextId)) {
+      nextId += 1;
+    }
+
+    const newCorner: Corner = {
+      id: nextId,
+      x: 50,
+      y: 50,
+      labelX: 50,
+      labelY: 50,
+      color: "normal",
+    };
+
+    const updatedCorners = sortCornersById([...corners, newCorner]);
+
+    setCorners(updatedCorners);
+    setTurnCount(String(updatedCorners.length));
+    setAnchorCornerId(null);
+    setStatus(
+      `Added T${nextId}. Drag the label into position, then right-click it and click the exact track point.`
+    );
+  }
+
   function moveLabel(
     cornerId: number,
     clientX: number,
@@ -320,16 +348,25 @@ export default function CreatorPage() {
   }
 
   function removeLastCorner() {
-    setCorners((prev) => prev.slice(0, -1));
+    setCorners((prev) => {
+      const updatedCorners = prev.slice(0, -1);
+      setTurnCount(String(updatedCorners.length));
+      return updatedCorners;
+    });
   }
 
   function resetCorners() {
     setCorners([]);
+    setTurnCount("0");
     setAnchorCornerId(null);
   }
 
   function removeSpecificCorner(cornerId: number) {
-    setCorners((prev) => prev.filter((corner) => corner.id !== cornerId));
+    setCorners((prev) => {
+      const updatedCorners = prev.filter((corner) => corner.id !== cornerId);
+      setTurnCount(String(updatedCorners.length));
+      return updatedCorners;
+    });
 
     if (anchorCornerId === cornerId) {
       setAnchorCornerId(null);
@@ -736,6 +773,14 @@ export default function CreatorPage() {
 
           {corners.length > 0 && (
             <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={addSingleCorner}
+                className="rounded-2xl border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-300 transition hover:bg-green-500/20"
+              >
+                Add Single Turn
+              </button>
+
               <button
                 type="button"
                 onClick={removeLastCorner}
