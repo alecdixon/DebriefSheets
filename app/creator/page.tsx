@@ -85,6 +85,8 @@ export default function CreatorPage() {
   const [trackName, setTrackName] = useState("");
   const [trackMapDataUrl, setTrackMapDataUrl] = useState("");
   const [turnCount, setTurnCount] = useState("10");
+  const [singleTurnNumber, setSingleTurnNumber] = useState("");
+
   const [corners, setCorners] = useState<Corner[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -154,6 +156,7 @@ export default function CreatorPage() {
     setTrackName("");
     setTrackMapDataUrl("");
     setTurnCount("10");
+    setSingleTurnNumber("");
     setCorners([]);
     setAnchorCornerId(null);
     setGeneratedLink("");
@@ -170,6 +173,7 @@ export default function CreatorPage() {
     setTrackMapDataUrl(template.track_map_url || "");
     setCorners(cleanCorners);
     setTurnCount(String(template.corner_count || cleanCorners.length || 0));
+    setSingleTurnNumber("");
     setGeneratedLink(`${origin}/driver/${template.id}`);
     setAnchorCornerId(null);
     setStatus(`Editing template: ${template.track_name}`);
@@ -218,16 +222,22 @@ export default function CreatorPage() {
   }
 
   function addSingleCorner() {
-    const usedIds = new Set(corners.map((corner) => corner.id));
+    const requestedId = Number(singleTurnNumber);
 
-    let nextId = 1;
+    if (!Number.isInteger(requestedId) || requestedId <= 0) {
+      setStatus("Please enter a valid turn number to add.");
+      return;
+    }
 
-    while (usedIds.has(nextId)) {
-      nextId += 1;
+    const alreadyExists = corners.some((corner) => corner.id === requestedId);
+
+    if (alreadyExists) {
+      setStatus(`T${requestedId} already exists. Remove it first or choose another number.`);
+      return;
     }
 
     const newCorner: Corner = {
-      id: nextId,
+      id: requestedId,
       x: 50,
       y: 50,
       labelX: 50,
@@ -239,9 +249,10 @@ export default function CreatorPage() {
 
     setCorners(updatedCorners);
     setTurnCount(String(updatedCorners.length));
+    setSingleTurnNumber("");
     setAnchorCornerId(null);
     setStatus(
-      `Added T${nextId}. Drag the label into position, then right-click it and click the exact track point.`
+      `Added T${requestedId}. Drag the label into position, then right-click it and click the exact track point.`
     );
   }
 
@@ -358,6 +369,7 @@ export default function CreatorPage() {
   function resetCorners() {
     setCorners([]);
     setTurnCount("0");
+    setSingleTurnNumber("");
     setAnchorCornerId(null);
   }
 
@@ -773,13 +785,24 @@ export default function CreatorPage() {
 
           {corners.length > 0 && (
             <div className="mt-5 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={addSingleCorner}
-                className="rounded-2xl border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-300 transition hover:bg-green-500/20"
-              >
-                Add Single Turn
-              </button>
+              <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-green-500/30 bg-green-500/10 p-3">
+                <input
+                  type="number"
+                  min={1}
+                  value={singleTurnNumber}
+                  onChange={(e) => setSingleTurnNumber(e.target.value)}
+                  placeholder="Turn number"
+                  className="w-[150px] rounded-xl border border-green-500/30 bg-[#0F141C] px-3 py-2 text-sm text-white placeholder:text-slate-500 outline-none"
+                />
+
+                <button
+                  type="button"
+                  onClick={addSingleCorner}
+                  className="rounded-xl border border-green-500/40 bg-green-500/20 px-4 py-2 text-sm font-semibold text-green-300 transition hover:bg-green-500/30"
+                >
+                  Add Turn
+                </button>
+              </div>
 
               <button
                 type="button"
