@@ -223,36 +223,48 @@ export default function CreatorPage() {
 
   function handleTrackMapFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
 
-    const allowedTypes = ["image/png", "image/jpeg"];
+    console.log("Selected file:", file);
 
-    if (!allowedTypes.includes(file.type)) {
-      setStatus("Please select a JPG or PNG image. WEBP is not supported for PDF export.");
+    if (!file) {
+      setStatus("No file was selected.");
+      return;
+    }
+
+    const fileName = file.name.toLowerCase();
+    const isJpgOrPng =
+      file.type === "image/png" ||
+      file.type === "image/jpeg" ||
+      file.type === "image/jpg" ||
+      fileName.endsWith(".jpg") ||
+      fileName.endsWith(".jpeg") ||
+      fileName.endsWith(".png");
+
+    if (!isJpgOrPng) {
+      setTrackMapFile(null);
+      setTrackMapPreviewUrl("");
+      setTrackMapStorageUrl("");
+      setStatus(
+        `Unsupported file type: ${file.type || "unknown"}. Please select a JPG or PNG image.`
+      );
       return;
     }
 
     setTrackMapFile(file);
     setTrackMapStorageUrl("");
 
-    const reader = new FileReader();
+    const localPreviewUrl = URL.createObjectURL(file);
+    setTrackMapPreviewUrl(localPreviewUrl);
 
-    reader.onload = () => {
-      const result = reader.result;
+    setStatus(
+      `Loaded track map: ${file.name}. Next step: click "Save Map to Supabase".`
+    );
 
-      if (typeof result === "string") {
-        setTrackMapPreviewUrl(result);
-        setStatus(
-          `Loaded track map: ${file.name}. Next step: click "Save Map to Supabase".`
-        );
-      }
-    };
-
-    reader.onerror = () => {
-      setStatus("Failed to read the selected track map image.");
-    };
-
-    reader.readAsDataURL(file);
+    console.log("Track map file stored in state:", {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
   }
 
   async function handleSaveMapToSupabase() {
@@ -781,7 +793,7 @@ export default function CreatorPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".jpg,.jpeg,.png,image/png,image/jpeg"
+            accept=".jpg,.jpeg,.png,image/png,image/jpeg,image/jpg"
             onChange={handleTrackMapFileChange}
             className="hidden"
           />
