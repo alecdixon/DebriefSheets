@@ -187,8 +187,10 @@ export default function CreatorPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setStatus("Please select a valid image file.");
+    const allowedTypes = ["image/png", "image/jpeg"];
+
+    if (!allowedTypes.includes(file.type)) {
+      setStatus("Please select a JPG or PNG image. WEBP is not supported for PDF export.");
       return;
     }
 
@@ -201,6 +203,11 @@ export default function CreatorPage() {
         setTrackMapDataUrl(result);
         setStatus(`Loaded track map: ${file.name}`);
       }
+  
+    };
+
+    reader.onerror = () => {
+      setStatus("Failed to read the selected track map image.");
     };
 
     reader.readAsDataURL(file);
@@ -620,14 +627,14 @@ export default function CreatorPage() {
                 </button>
 
                 <span className="self-center text-sm text-[#9CA3AF]">
-                  JPG, PNG, WEBP supported
+                  JPG, PNG supported
                 </span>
               </div>
 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".jpg,.jpeg,.png,.webp,image/png,image/jpeg,image/webp"
+                accept=".jpg,.jpeg,.png,image/png,image/jpeg"
                 onChange={handleTrackMapFileChange}
                 className="hidden"
               />

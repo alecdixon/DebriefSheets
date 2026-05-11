@@ -9,15 +9,10 @@ type TurnColor = "normal" | "blue" | "green" | "red";
 
 type Corner = {
   id: number;
-
-  // Actual track point
   x: number;
   y: number;
-
-  // Visible label position from creator page
   labelX?: number;
   labelY?: number;
-
   color?: TurnColor;
 };
 
@@ -51,8 +46,8 @@ type RequestBody = {
   extraRecipientEmail?: string | null;
   primaryLimitation?: string;
   overallComments?: string;
-  reliabilityFlags: Record<string, boolean>;
-  cornerFeedback: CornerFeedback[];
+  reliabilityFlags?: Record<string, boolean>;
+  cornerFeedback?: CornerFeedback[];
   team?: string;
   templateId?: string;
 };
@@ -157,7 +152,7 @@ function normaliseCorners(corners: Corner[] | undefined): Corner[] {
       y: Number(corner.y),
       labelX: typeof corner.labelX === "number" ? corner.labelX : undefined,
       labelY: typeof corner.labelY === "number" ? corner.labelY : undefined,
-      color: corner.color,
+      color: corner.color ?? "normal",
     }))
     .filter((corner) => {
       return (
@@ -165,7 +160,8 @@ function normaliseCorners(corners: Corner[] | undefined): Corner[] {
         Number.isFinite(corner.x) &&
         Number.isFinite(corner.y)
       );
-    });
+    })
+    .sort((a, b) => a.id - b.id);
 }
 
 function normaliseIncidentMarkers(markers: IncidentMarker[] | undefined): IncidentMarker[] {
@@ -198,7 +194,12 @@ function normaliseCornerFeedback(feedback: CornerFeedback[] | undefined): Corner
         typeof row.exitBalanceValue === "number" ? row.exitBalanceValue : undefined,
       comment: String(row.comment ?? ""),
     }))
-    .filter((row) => Number.isFinite(row.cornerId));
+    .filter((row) => Number.isFinite(row.cornerId))
+    .sort((a, b) => a.cornerId - b.cornerId);
+}
+
+function isValidTurnColor(value: unknown): value is TurnColor {
+  return value === "normal" || value === "blue" || value === "green" || value === "red";
 }
 
 async function buildDebriefPdf(payload: {
@@ -285,6 +286,8 @@ async function buildDebriefPdf(payload: {
     value?: number,
     fontSize = 7.8
   ) {
+    const safeLabel = label || "-";
+
     page.drawRectangle({
       x,
       y,
@@ -295,7 +298,6 @@ async function buildDebriefPdf(payload: {
       borderWidth: 0.8,
     });
 
-    const safeLabel = label || "-";
     const textWidth = bold.widthOfTextAtSize(safeLabel, fontSize);
 
     page.drawText(safeLabel, {
@@ -338,10 +340,50 @@ async function buildDebriefPdf(payload: {
     });
   }
 
-  async function loadTrackMapImage(imageUrl: string | null | undefined) {
-    if (!imageUrl) return null;
+  async function loadTrackMapImage(imageSource: string | null | undefined) {
+    if (!imageSource) return null;
 
-    const response = await fetch(imageUrl, {
+    const source = imageSource.trim();
+    if (!source) return null;
+
+    /*
+      Creator app currently stores imported images as Data URLs:
+      data:image/png;base64,...
+      data:image/jpeg;base64,...
+    */
+    if (source.startsWith("data:image/")) {
+      const match = source.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+
+      if (!match) {
+        throw new Error("Invalid base64 track map data URL.");
+      }
+
+      const contentType = match[1].toLowerCase();
+      const base64Data = match[2];
+
+      if (
+        !contentType.includes("png") &&
+        !contentType.includes("jpeg") &&
+        !contentType.includes("jpg")
+      ) {
+        throw new Error(
+          `Unsupported embedded track map format: ${contentType}. PDF export only supports PNG/JPG.`
+        );
+      }
+
+      const imageBytes = Buffer.from(base64Data, "base64");
+
+      if (contentType.includes("png")) {
+        return await pdf.embedPng(imageBytes);
+      }
+
+      return await pdf.embedJpg(imageBytes);
+    }
+
+    /*
+      Fallback support for future public URLs.
+    */
+    const response = await fetch(source, {
       cache: "no-store",
     });
 
@@ -380,14 +422,14 @@ async function buildDebriefPdf(payload: {
     y: number,
     width: number,
     height: number,
-    imageUrl?: string | null,
+    imageSource?: string | null,
     corners: Corner[] = [],
     incidentMarkers: IncidentMarker[] = [],
     title = "Track Map"
   ) {
     drawPanel(page, x, y, width, height, title);
 
-    if (!imageUrl) {
+    if (!imageSource) {
       page.drawText("No track map available", {
         x: x + 14,
         y: y + height / 2,
@@ -399,7 +441,7 @@ async function buildDebriefPdf(payload: {
     }
 
     try {
-      const image = await loadTrackMapImage(imageUrl);
+      const image = await loadTrackMapImage(imageSource);
 
       if (!image) {
         throw new Error("Track map image could not be embedded.");
@@ -425,6 +467,8 @@ async function buildDebriefPdf(payload: {
       });
 
       for (const corner of corners) {
+        const turnColor = isValidTurnColor(corner.color) ? corner.color : "normal";
+
         const labelXPercent =
           typeof corner.labelX === "number" ? corner.labelX : corner.x;
 
@@ -467,7 +511,7 @@ async function buildDebriefPdf(payload: {
           x: labelX,
           y: labelY,
           size: markerRadius,
-          color: getTurnColor(corner.color),
+          color: getTurnColor(turnColor),
           borderColor: colors.text,
           borderWidth: 1.3,
         });
@@ -523,7 +567,8 @@ async function buildDebriefPdf(payload: {
       }
     } catch (error) {
       console.error("Track map could not be loaded:", {
-        imageUrl,
+        sourceStartsWith: imageSource.slice(0, 40),
+        sourceLength: imageSource.length,
         error: getErrorMessage(error),
       });
 
@@ -535,7 +580,7 @@ async function buildDebriefPdf(payload: {
         color: colors.muted,
       });
 
-      page.drawText("Use PNG/JPG public Supabase URLs only", {
+      page.drawText("Use PNG/JPG images only", {
         x: x + 14,
         y: y + height / 2 - 18,
         size: 8,
@@ -1019,6 +1064,22 @@ export async function POST(request: Request) {
     const normalisedCorners = normaliseCorners(corners);
     const normalisedIncidentMarkers = normaliseIncidentMarkers(incidentMarkers);
     const normalisedCornerFeedback = normaliseCornerFeedback(cornerFeedback);
+    const normalisedReliabilityFlags = reliabilityFlags ?? {};
+
+    console.log("Debrief PDF request:", {
+      driverName,
+      trackName,
+      templateId,
+      trackMapType: trackMapUrl?.startsWith("data:image/")
+        ? "data-url"
+        : trackMapUrl
+          ? "url-or-other"
+          : "none",
+      trackMapLength: trackMapUrl?.length ?? 0,
+      corners: normalisedCorners.length,
+      incidents: normalisedIncidentMarkers.length,
+      feedbackRows: normalisedCornerFeedback.length,
+    });
 
     const intendedRecipients = [
       primaryRecipientEmail?.trim(),
@@ -1043,7 +1104,7 @@ export async function POST(request: Request) {
       driver_name: driverName,
       primary_limitation: primaryLimitation ?? null,
       overall_comments: overallComments ?? null,
-      reliability_flags: reliabilityFlags ?? {},
+      reliability_flags: normalisedReliabilityFlags,
       corner_feedback: normalisedCornerFeedback,
       incident_markers: normalisedIncidentMarkers,
     });
@@ -1065,7 +1126,7 @@ export async function POST(request: Request) {
       incidentMarkers: normalisedIncidentMarkers,
       primaryLimitation,
       overallComments,
-      reliabilityFlags: reliabilityFlags ?? {},
+      reliabilityFlags: normalisedReliabilityFlags,
       cornerFeedback: normalisedCornerFeedback,
     });
 
