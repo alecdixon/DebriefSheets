@@ -78,12 +78,33 @@ function buildInitialCorners(count: number): Corner[] {
   });
 }
 
+function makeSafePathPart(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
 export default function CreatorPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [team, setTeam] = useState("GB3");
   const [trackName, setTrackName] = useState("");
+
+  /**
+   * trackMapDataUrl is used for previewing in the browser.
+   * After saving, this becomes the public Supabase Storage URL.
+   */
   const [trackMapDataUrl, setTrackMapDataUrl] = useState("");
+
+  /**
+   * trackMapFile holds the actual file selected by the user.
+   * This is uploaded to Supabase Storage when saving.
+   */
+  const [trackMapFile, setTrackMapFile] = useState<File | null>(null);
+
   const [turnCount, setTurnCount] = useState("10");
   const [singleTurnNumber, setSingleTurnNumber] = useState("");
 
@@ -155,6 +176,7 @@ export default function CreatorPage() {
     setTeam("GB3");
     setTrackName("");
     setTrackMapDataUrl("");
+    setTrackMapFile(null);
     setTurnCount("10");
     setSingleTurnNumber("");
     setCorners([]);
@@ -171,6 +193,7 @@ export default function CreatorPage() {
     setTeam(template.team || "GB3");
     setTrackName(template.track_name || "");
     setTrackMapDataUrl(template.track_map_url || "");
+    setTrackMapFile(null);
     setCorners(cleanCorners);
     setTurnCount(String(template.corner_count || cleanCorners.length || 0));
     setSingleTurnNumber("");
@@ -194,6 +217,8 @@ export default function CreatorPage() {
       return;
     }
 
+    setTrackMapFile(file);
+
     const reader = new FileReader();
 
     reader.onload = () => {
@@ -201,9 +226,8 @@ export default function CreatorPage() {
 
       if (typeof result === "string") {
         setTrackMapDataUrl(result);
-        setStatus(`Loaded track map: ${file.name}`);
+        setStatus(`Loaded track map: ${file.name}. Click Save Template to upload it.`);
       }
-  
     };
 
     reader.onerror = () => {
@@ -404,6 +428,42 @@ export default function CreatorPage() {
     setStatus("Label positions reset to track points.");
   }
 
+  async function uploadTrackMapIfNeeded(): Promise<string> {
+    /**
+     * Existing template already has a saved Supabase URL and no new file was selected.
+     */
+    if (!trackMapFile) {
+      return trackMapDataUrl;
+    }
+
+    const fileExtension = trackMapFile.type === "image/png" ? "png" : "jpg";
+
+    const safeTeam = makeSafePathPart(team) || "team";
+    const safeTrack = makeSafePathPart(trackName) || "track";
+
+    const filePath = `${safeTeam}/${safeTrack}-${Date.now()}.${fileExtension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("track-maps")
+      .upload(filePath, trackMapFile, {
+        cacheControl: "3600",
+        upsert: true,
+        contentType: trackMapFile.type,
+      });
+
+    if (uploadError) {
+      throw new Error(`Failed to upload track map: ${uploadError.message}`);
+    }
+
+    const { data } = supabase.storage.from("track-maps").getPublicUrl(filePath);
+
+    if (!data.publicUrl) {
+      throw new Error("Failed to create public track map URL.");
+    }
+
+    return data.publicUrl;
+  }
+
   async function handleSaveTemplate() {
     if (!team.trim()) {
       setStatus("Please select a team.");
@@ -427,12 +487,16 @@ export default function CreatorPage() {
 
     try {
       setSaving(true);
+      setStatus(trackMapFile ? "Uploading track map to Supabase..." : "Saving template...");
+
+      const finalTrackMapUrl = await uploadTrackMapIfNeeded();
+
       setStatus(selectedTemplateId ? "Updating template..." : "Saving template...");
 
       const payload = {
         team,
         track_name: trackName.trim(),
-        track_map_url: trackMapDataUrl,
+        track_map_url: finalTrackMapUrl,
         corner_count: corners.length,
         corners: sortCornersById(corners),
       };
@@ -449,7 +513,9 @@ export default function CreatorPage() {
         }
 
         setGeneratedLink(`${origin}/driver/${selectedTemplateId}`);
-        setStatus("Template updated successfully.");
+        setTrackMapFile(null);
+        setTrackMapDataUrl(finalTrackMapUrl);
+        setStatus("Template updated successfully. Track map saved to Supabase.");
       } else {
         const { data, error } = await supabase
           .from("debrief_templates")
@@ -463,9 +529,12 @@ export default function CreatorPage() {
         }
 
         const newId = data.id as string;
+
         setSelectedTemplateId(newId);
         setGeneratedLink(`${origin}/driver/${newId}`);
-        setStatus("Template saved successfully.");
+        setTrackMapFile(null);
+        setTrackMapDataUrl(finalTrackMapUrl);
+        setStatus("Template saved successfully. Track map saved to Supabase.");
       }
 
       await loadTemplates();
@@ -528,8 +597,8 @@ export default function CreatorPage() {
                 Debrief Template Creator
               </h1>
               <p className="mt-3 text-sm leading-6 text-[#9CA3AF] md:text-base">
-                Create a team template, position readable corner labels, add leader lines, save to
-                Supabase, and generate a driver page link.
+                Create a team template, position readable corner labels, add leader lines, save the
+                track map to Supabase Storage, and generate a driver page link.
               </p>
             </div>
 
@@ -627,8 +696,14 @@ export default function CreatorPage() {
                 </button>
 
                 <span className="self-center text-sm text-[#9CA3AF]">
-                  JPG, PNG supported
+                  JPG and PNG supported
                 </span>
+
+                {trackMapFile && (
+                  <span className="self-center rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-300">
+                    New map selected: {trackMapFile.name}
+                  </span>
+                )}
               </div>
 
               <input
@@ -889,10 +964,12 @@ export default function CreatorPage() {
               type="button"
               onClick={handleSaveTemplate}
               disabled={saving}
-              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600] disabled:opacity-60"
+              className="rounded-2xl border border-[#2A3441] bg-[#1B2430] px-5 py-3 text-sm font-semibold text-white transition hover:border-[#E10600] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving
-                ? "Saving..."
+                ? trackMapFile
+                  ? "Uploading Map..."
+                  : "Saving..."
                 : selectedTemplateId
                   ? "Update Template"
                   : "Save Template to Supabase"}
@@ -972,6 +1049,12 @@ export default function CreatorPage() {
                           <span className="rounded-full border border-[#2A3441] bg-[#1B2430] px-3 py-1 text-xs font-semibold text-white">
                             {template.corner_count} turns
                           </span>
+
+                          {template.track_map_url?.includes("/storage/v1/object/public/") && (
+                            <span className="rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-300">
+                              Map saved
+                            </span>
+                          )}
                         </div>
 
                         <h3 className="text-xl font-semibold text-white">
